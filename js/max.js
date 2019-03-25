@@ -18,7 +18,45 @@ module.exports = class max extends Exchange {
             'rateLimit': 1200,
             'cretified': false,
             'has': {
+                'CORS': true,
+                'publicAPI': true,
+                'privateAPI': true,
+
+                'cancelAllOrders': false,
+                'cancelOrder': true,
+                'cancelOrders': false,
+                'createDepositAddress': false,
+                'createLimitOrder': true,
+                'createMarketOrder': true,
+                'createOrder': true,
+                'deposit': false,
+                'editOrder': 'emulated',
+                'fetchBalance': true,
+                'fetchBidsAsks': false,
+                'fetchClosedOrders': true,
+                'fetchCurrencies': false,
+                'fetchDepositAddress': false,
+                'fetchDeposits': false,
+                'fetchFundingFees': false,
+                'fetchL2OrderBook': true,
+                'fetchLedger': false,
+                'fetchMarkets': true,
                 'fetchMyTrades': true,
+                'fetchOHLCV': true,
+                'fetchOpenOrders': true,
+                'fetchOrder': true,
+                'fetchOrderBook': true,
+                'fetchOrderBooks': false,
+                'fetchOrders': true,
+                'fetchTicker': true,
+                'fetchTickers': true,
+                'fetchTrades': true,
+                'fetchTradingFee': false,
+                'fetchTradingFees': false,
+                'fetchTradingLimits': false,
+                'fetchTransactions': false,
+                'fetchWithdrawals': false,
+                'withdraw': false,
             },
             'timeframes': {
                 '1m': '1',
@@ -190,13 +228,13 @@ module.exports = class max extends Exchange {
         if (limit !== undefined)
             request['limit'] = limit; // default = 300
         const response = await this.publicGetDepth (this.extend (request, params));
-        const timestamp = this.safeInteger (response, 'timestamp') * 1000;
+        const timestamp = this.safeTimestampThousand (response, 'timestamp');
         const orderbook = this.parseOrderBook (response, timestamp);
         return orderbook;
     }
 
     parseTicker (ticker, tickerSymbol, market = undefined) {
-        const timestamp = this.safeInteger (ticker, 'at') * 1000;
+        const timestamp = this.safeTimestampThousand (response, 'at');
         const symbol = this.findSymbol (tickerSymbol, market);
         const last = this.safeFloat (ticker, 'last');
         return {
@@ -258,21 +296,21 @@ module.exports = class max extends Exchange {
         ];
     }
 
-    async fetchOHLCV (symbol, timeframe = '1m', timestamp = undefined, limit = undefined, params = {}) {
+    async fetchOHLCV (symbol, timeframe = '1m', since = undefined, limit = undefined, params = {}) {
         await this.loadMarkets ();
         const market = this.market (symbol);
         const request = {
             'market': market['id'],
             'period': this.timeframes[timeframe],
         };
-        if (timestamp !== undefined) {
-            request['timestamp'] = timestamp;
+        if (since !== undefined) {
+            request['timestamp'] = since;
         }
         if (limit !== undefined) {
             request['limit'] = limit; // default = 30
         }
         const response = await this.publicGetK (this.extend (request, params));
-        return this.parseOHLCVs (response, market, timeframe, timestamp, limit);
+        return this.parseOHLCVs (response, market, timeframe, since, limit);
     }
 
     safeTimestampThousand (o, k, $default, n = asInteger (prop (o, k))) {
@@ -349,21 +387,22 @@ module.exports = class max extends Exchange {
         };
     }
 
-    async fetchTrades (symbol, timestamp = undefined, limit = undefined, params = {}) {
+    async fetchTrades (symbol, since = undefined, limit = undefined, params = {}) {
         await this.loadMarkets ();
         const market = this.market (symbol);
         const request = {
             'market': market['id'],
         };
-        if (timestamp !== undefined) {
-            request['timestamp'] = timestamp;
-        }
+        // timestamp : the seconds elapsed since Unix epoch, set to return trades executed before the time only
+        // if (timestamp !== undefined) {
+        //     request['timestamp'] = timestamp;
+        // }
         if (limit !== undefined) {
             request['limit'] = limit; // default = 50, maximum = 1000
         }
         const response = await this.publicGetTrades (this.extend (request, params));
         console.log ('trade', response[0]);
-        return this.parseTrades (response, market, timestamp, limit);
+        return this.parseTrades (response, market, since, limit);
     }
 
     async fetchMyTrades (symbol = undefined, since = undefined, limit = undefined, params = {}) {
@@ -376,8 +415,9 @@ module.exports = class max extends Exchange {
         };
         if (limit !== undefined)
             request['limit'] = limit;
-        if (since !== undefined)
-            request['timestamp'] = since;
+        // timestamp : the seconds elapsed since Unix epoch, set to return trades executed before the time only
+        // if (since !== undefined)
+        //     request['timestamp'] = since;
         const response = await this.privateGetTradesMy (this.extend (request, params));
         return this.parseTrades (response, market, since, limit);
     }
