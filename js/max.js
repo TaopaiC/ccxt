@@ -162,14 +162,42 @@ module.exports = class max extends Exchange {
         return this.options['timeDifference'];
     }
 
+    insertObjectsPropertyBy (a, keyA, b, keyB, insertKey) {
+        const result = {};
+        for (let i = 0; i < a.length; i++) {
+            const entry = a[i];
+            const index = entry[keyA];
+            result[index] = entry;
+        }
+        for (let i = 0; i < b.length; i++) {
+            const entry = b[i];
+            const index = entry[keyB];
+            if (result[index]) {
+                result[index][insertKey] = entry;
+            }
+        }
+        return Object.values (result);
+    }
+
     async fetchCurrencies (params = {}) {
-        const response = await this.publicGetCurrencies (params);
+        const currenciesResponse = await this.publicGetCurrencies (params);
+        const withdrawalResponse = await this.publicGetWithdrawalConstraint ();
+        const response = this.insertObjectsPropertyBy (
+            currenciesResponse,
+            'id',
+            withdrawalResponse,
+            'currency',
+            'withdrawal'
+        );
         const result = {};
         for (let i = 0; i < response.length; i++) {
             const currency = response[i];
             const id = currency['id'];
             const code = this.commonCurrencyCode (id).toUpperCase ();
             const fiat = id === 'twd' ? true : false;
+            const withdrawal = this.safeValue (currency, 'withdrawal');
+            const withdrawalFee = this.safeValue (withdrawal, 'fee');
+            const withdrawalLimit = this.safeValue (withdrawal, 'min_amount');
             result[code] = {
                 'id': id,
                 'code': code,
@@ -191,13 +219,13 @@ module.exports = class max extends Exchange {
                         'max': undefined,
                     },
                     'withdraw': {
-                        'min': undefined,
+                        'min': withdrawalLimit,
                         'max': undefined,
                     },
                 },
                 'funding': {
                     'withdraw': {
-                        'fee': undefined,
+                        'fee': withdrawalFee,
                     },
                     'deposit': {
                         'fee': undefined,
@@ -478,7 +506,6 @@ module.exports = class max extends Exchange {
         //     request['timestamp'] = timestamp;
         // }
         const response = await this.privateGetWithdrawals (this.extend (request, params));
-        console.log(response);
         return this.parseTransactions (response, currency, since, limit);
     }
 
@@ -518,9 +545,9 @@ module.exports = class max extends Exchange {
         //        "order_id": 18298466
         //    }
         const timestamp = this.safeTimestampThousand (trade, 'created_at');
-        const price = this.safeFloat(trade, 'price');
-        const amount = this.safeFloat(trade, 'volume');
-        const id = this.safeInteger(trade, 'id');
+        const price = this.safeFloat (trade, 'price');
+        const amount = this.safeFloat (trade, 'volume');
+        const id = this.safeInteger (trade, 'id');
         const side = this.safeString (trade, 'side');
         const order = this.safeString (trade, 'order_id');
         let fee = undefined;
@@ -570,7 +597,6 @@ module.exports = class max extends Exchange {
             request['limit'] = limit; // default = 50, maximum = 1000
         }
         const response = await this.publicGetTrades (this.extend (request, params));
-        console.log ('trade', response[0]);
         return this.parseTrades (response, market, since, limit);
     }
 
