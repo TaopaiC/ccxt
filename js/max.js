@@ -22,19 +22,17 @@ module.exports = class max extends Exchange {
                 'publicAPI': true,
                 'privateAPI': true,
 
-                'cancelAllOrders': false,
+                'cancelAllOrders': true,
                 'cancelOrder': true,
-                'cancelOrders': false,
                 'createDepositAddress': false,
                 'createLimitOrder': true,
                 'createMarketOrder': true,
                 'createOrder': true,
                 'deposit': false,
-                'editOrder': 'emulated',
                 'fetchBalance': true,
                 'fetchBidsAsks': false,
                 'fetchClosedOrders': true,
-                'fetchCurrencies': false,
+                'fetchCurrencies': true,
                 'fetchDepositAddress': false,
                 'fetchDeposits': false,
                 'fetchFundingFees': false,
@@ -130,7 +128,7 @@ module.exports = class max extends Exchange {
                         'orders/clear',
                         'orders',
                         'orders/multi',
-                        'orders/delete',
+                        'order/delete',
                     ],
                 },
             },
@@ -164,6 +162,53 @@ module.exports = class max extends Exchange {
         return this.options['timeDifference'];
     }
 
+    async fetchCurrencies (params = {}) {
+        const response = await this.publicGetCurrencies (params);
+        const result = {};
+        for (let i = 0; i < response.length; i++) {
+            const currency = response[i];
+            const id = currency['id'];
+            const code = this.commonCurrencyCode (id).toUpperCase ();
+            const fiat = id === 'twd' ? true : false;
+            result[code] = {
+                'id': id,
+                'code': code,
+                'name': code,
+                'active': true,
+                'fiat': fiat,
+                'precision': this.safeInteger (currency, 'precision'),
+                'limits': {
+                    'amount': {
+                        'min': undefined,
+                        'max': undefined,
+                    },
+                    'price': {
+                        'min': undefined,
+                        'max': undefined,
+                    },
+                    'deposit': {
+                        'min': undefined,
+                        'max': undefined,
+                    },
+                    'withdraw': {
+                        'min': undefined,
+                        'max': undefined,
+                    },
+                },
+                'funding': {
+                    'withdraw': {
+                        'fee': undefined,
+                    },
+                    'deposit': {
+                        'fee': undefined,
+                    },
+                },
+                'info': currency,
+            };
+        }
+        return result;
+    }
+
     async fetchMarkets (params = {}) {
         const markets = await this.publicGetMarkets ();
         if (this.options['adjustForTimeDifference']) {
@@ -175,8 +220,8 @@ module.exports = class max extends Exchange {
             const id = market['id'];
             const baseId = market['base_unit'];
             const quoteId = market['quote_unit'];
-            const base = this.commonCurrencyCode (baseId);
-            const quote = this.commonCurrencyCode (quoteId);
+            const base = this.commonCurrencyCode (baseId).toUpperCase ();
+            const quote = this.commonCurrencyCode (quoteId).toUpperCase ();
             const symbol = base + '/' + quote;
             const precision = {
                 'base': market['base_unit_precision'],
@@ -206,15 +251,16 @@ module.exports = class max extends Exchange {
         await this.loadMarkets ();
         const response = await this.privateGetMembersAccounts (params);
         const result = { 'info': response };
-        console.log(result);
-        for (let i = 0; i < balances.length; i++) {
+        for (let i = 0; i < response.length; i++) {
             const balance = response[i];
             let currency = balance['currency'];
             if (currency in this.currencies_by_id)
                 currency = this.currencies_by_id[currency]['code'];
-            const account = {
-                'free': parseFloat
-            }
+            const account = this.account ();
+            account['free'] = this.safeFloat (balance, 'balance');
+            account['used'] = this.safeFloat (balance, 'locked');
+            account['total'] = account['free'] + account['used'];
+            result[currency] = account;
         }
         return this.parseBalance (result);
     }
@@ -311,6 +357,67 @@ module.exports = class max extends Exchange {
         }
         const response = await this.publicGetK (this.extend (request, params));
         return this.parseOHLCVs (response, market, timeframe, since, limit);
+    }
+
+    parseDepositAddress (code, response) {
+        let depositAddress = undefined;
+        if (response.length <= 1) {
+            depositAddress = response[0];
+        } else {
+            // TODO for multiple deposit address
+            depositAddress = response[0];
+        }
+        const address = this.safeString (depositAddress, 'address');
+        let tag = undefined;
+        this.checkAddress (address);
+        return {
+            'info': response,
+            'currency': code,
+            'address': address,
+            'tag': tag,
+        };
+    }
+
+    async createDepositAddress (code, params = {}) {
+        await this.loadMarkets ();
+        const currency = this.currency (code);
+        const request = {
+            'currency': currency['id'],
+        };
+        const response = await this.privatePostDepositAddresses (this.extend (request, params));
+        return this.parseDepositAddress (code, response);
+    }
+
+    async fetchDepositAddress (code, params = {}) {
+        await this.loadMarkets ();
+        const currency = this.currency (code);
+        const request = {
+            'currency': currency['id'],
+        };
+        const response = await this.privateGetDepositAddresses (this.extend (request, params));
+        return this.parseDepositAddress (code, response);
+    }
+
+    parseTransaction (transaction, currency = undefined) {
+        // TODO
+        return transaction;
+    }
+
+    async fetchWithdrawals (code = undefined, since = undefined, limit = undefined, params = {}) {
+        await this.loadMarkets ();
+        let currency = undefined;
+        const request = {};
+        if (code !== undefined) {
+            currency = this.currency (code);
+            request['asset'] = currency['id'];
+        }
+        // timestamp : the seconds elapsed since Unix epoch, set to return trades executed before the time only
+        // if (timestamp !== undefined) {
+        //     request['timestamp'] = timestamp;
+        // }
+        const response = await this.privateGetWithdrawals (this.extend (request, params));
+        console.log(response);
+        return this.parseTransactions (response, currency, since, limit);
     }
 
     safeTimestampThousand (o, k, $default, n = asInteger (prop (o, k))) {
@@ -480,6 +587,59 @@ module.exports = class max extends Exchange {
         return result;
     }
 
+    async createOrder (symbol, type, side, amount, price = undefined, params = {}) {
+        await this.loadMarkets ();
+        const market = this.market (symbol);
+        const order = {
+            'market': market['id'],
+            'volume': this.amountToPrecision (symbol, amount),
+            'ord_type': type,
+            'side': side,
+        };
+        let priceIsRequired = false;
+        let stopPriceIsRequired = false;
+        if (type === 'limit' || type === 'stop_limit') {
+            priceIsRequired = true;
+        }
+        if (type === 'stop_limit' || type === 'stop_market') {
+            stopPriceIsRequired = true;
+        }
+        if (priceIsRequired) {
+            if (price === undefined) {
+                throw new InvalidOrder (this.id + ' createOrder method requires a price argument for a ' + type + ' order');
+            }
+            order['price'] = this.priceToPrecision (symbol, price);
+        }
+        if (stopPriceIsRequired) {
+            const stopPrice = this.safeFloat (params, 'stopPrice');
+            if (stopPrice === undefined) {
+                throw new InvalidOrder (this.id + ' createOrder method requires a stopPrice extra param for a ' + type + ' order');
+            }
+            params = this.omit (params, 'stopPrice');
+            order['stopPrice'] = this.priceToPrecision (symbol, stopPrice);
+        }
+        const response = await this.privatePostOrders (this.extend (order, params));
+        return this.parseOrder (response, market);
+    }
+
+    async cancelAllOrders (symbol = undefined, params = {}) {
+        const request = {};
+        if (symbol !== undefined) {
+            await this.loadMarkets ();
+            const market = this.market (symbol);
+            request['market'] = market['id'];
+        }
+        return this.privatePostOrdersClear (this.extend (request, params));
+    }
+
+    async cancelOrder (id, symbol = undefined, params = {}) {
+        const request = {
+            'id': id,
+        };
+        const response = await this.privatePostOrderDelete (this.extend (request, params));
+        return this.parseOrder (response);
+    }
+
     async fetchOrder (id) {
         if (id === undefined)
             throw new ArgumentsRequired (this.id + ' fetchOrder requires a id argument');
@@ -515,6 +675,14 @@ module.exports = class max extends Exchange {
     }
 
     sign (path, api = 'public', method = 'GET', params = {}, headers = undefined, body = undefined) {
+        console.log('sign in', {
+            path,
+            api,
+            method,
+            params,
+            headers,
+            body,
+        });
         let url = this.urls['api'][api];
         url += '/' + this.implodeParams (path, params);
         if (api === 'private') {
@@ -543,6 +711,7 @@ module.exports = class max extends Exchange {
             url,
             method,
             headers,
+            body,
         });
         return {
             'url': url,
