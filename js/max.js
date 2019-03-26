@@ -280,7 +280,7 @@ module.exports = class max extends Exchange {
     }
 
     parseTicker (ticker, tickerSymbol, market = undefined) {
-        const timestamp = this.safeTimestampThousand (response, 'at');
+        const timestamp = this.safeTimestampThousand (ticker, 'at');
         const symbol = this.findSymbol (tickerSymbol, market);
         const last = this.safeFloat (ticker, 'last');
         return {
@@ -398,9 +398,71 @@ module.exports = class max extends Exchange {
         return this.parseDepositAddress (code, response);
     }
 
+    parseTransactionStatusByType (status, type = undefined) {
+        if (type === undefined) {
+            return status;
+        }
+        const statuses = {
+            'deposit': {
+            },
+            'withdrawal': {
+                'sent': 'pending',
+                'confirmed': 'ok',
+            },
+        };
+        return (status in statuses[type]) ? statuses[type][status] : status;
+    }
+
     parseTransaction (transaction, currency = undefined) {
-        // TODO
-        return transaction;
+        const id = this.safeString (transaction, 'uuid');
+        const txid = this.safeString (transaction, 'txid');
+        let code = undefined;
+        console.log ('currency', currency);
+        const currencyId = this.safeString (transaction, 'currency');
+        if (currencyId in this.currencies_by_id) {
+            currency = this.currencies_by_id[currencyId];
+        } else {
+            code = this.commonCurrencyCode (currencyId);
+        }
+        // TODO why?
+        if (currency !== undefined) {
+            code = currency['code'];
+        }
+        const timestamp = this.safeTimestampThousand (transaction, 'created_at');
+        const updated = this.safeTimestampThousand (transaction, 'updated_at');
+        const amount = this.safeFloat (transaction, 'amount');
+        let feeCurrencyId = this.safeString (transaction, 'currency');
+        let feeCurrency = undefined;
+        if (feeCurrencyId in this.currencies_by_id) {
+            feeCurrency = this.currencies_by_id[feeCurrencyId];
+        }
+        if (feeCurrency !== undefined) {
+            feeCurrencyId = feeCurrency['code'];
+        } else {
+            feeCurrencyId = this.commonCurrencyCode (feeCurrencyId);
+        }
+        const fee = {
+            'cost': this.safeFloat (transaction, 'fee'),
+            'currency': feeCurrencyId,
+        };
+        // TODO type
+        const type = 'withdrawal';
+        const status = this.parseTransactionStatusByType (this.safeString (transaction, 'state'), type);
+        return {
+            'info': transaction,
+            'id': id,
+            'txid': txid,
+            'timestamp': timestamp,
+            'datetime': this.iso8601 (timestamp),
+            'address': undefined,
+            'tag': undefined,
+            'type': type,
+            'amount': amount,
+            'currency': code,
+            'status': status,
+            'updated': updated,
+            'fee': fee,
+        };
     }
 
     async fetchWithdrawals (code = undefined, since = undefined, limit = undefined, params = {}) {
