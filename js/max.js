@@ -395,8 +395,13 @@ module.exports = class max extends Exchange {
             // TODO for multiple deposit address
             depositAddress = response[0];
         }
-        const address = this.safeString (depositAddress, 'address');
+        let address = this.safeString (depositAddress, 'address');
         let tag = undefined;
+        if (code === 'XRP' && address) {
+          const splitted = address.split('?dt=');
+          address = splitted[0];
+          tag = splitted[1];
+        }
         this.checkAddress (address);
         return {
             'info': response,
