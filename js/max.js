@@ -776,29 +776,33 @@ module.exports = class max extends Exchange {
             headers,
             body,
         });
+        let newParams = params;
         let url = this.urls['api'][api];
         url += '/' + this.implodeParams (path, params);
         if (api === 'private') {
             this.checkRequiredCredentials ();
             const payloadPath = url.replace (/^.*\/\/[^/]+/, '');
-            const payload = this.stringToBase64 (this.json (this.extend ({
+            newParams = this.extend (params, {
                 'nonce': this.nonce (),
                 'path': payloadPath,
-            }, params)));
+            });
+            const payload = this.stringToBase64 (this.json (newParams));
             const signature = this.hmac (payload, this.secret);
-            headers = {
+            headers = this.extend (headers, {
                 'X-MAX-ACCESSKEY': this.apiKey,
                 'X-MAX-PAYLOAD': payload,
                 'X-MAX-SIGNATURE': signature,
-            };
-            if (Object.keys (params).length) {
-                url += '?' + this.urlencode (params);
-                console.log('....', this.urlencode (params));
+            });
+        }
+        if (method === 'GET' || method === 'DELETE') {
+            if (Object.keys (newParams).length) {
+                url += '?' + this.urlencode (newParams);
             }
         } else {
-            if (Object.keys (params).length) {
-                url += '?' + this.urlencode (params);
-            }
+            body = this.json (newParams);
+            headers = this.extend (headers, {
+                'Content-Type': 'application/json',
+            });
         }
         console.log({
             url,
