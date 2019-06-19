@@ -6,6 +6,27 @@ const Exchange = require ('./base/Exchange');
 const { ExchangeError, ArgumentsRequired, ExchangeNotAvailable, InsufficientFunds, OrderNotFound, InvalidOrder, DDoSProtection, InvalidNonce, AuthenticationError, InvalidAddress } = require ('./base/errors');
 const { ROUND } = require ('./base/functions/number');
 const { prop, asInteger, isNumber } = require ('./base/functions/type');
+const CURRENCY_MIN = {
+    'TWD': 250,
+    'BTC': 0.0015,
+    'ETH': 0.05,
+    'LTC': 0.1112,
+    'BCH': 0.03,
+    'MITH': 190.0,
+    'USDT': 8.0,
+    'TRX': 340.0,
+    'CCCX': 2100.0,
+    'EOS': 1.7,
+    'BAT': 20.0,
+    'ZRX': 30.0,
+    'GNT': 110.0,
+    'OMG': 5.0,
+    'KNC': 36.0,
+    'XRP': 27.0,
+    'FMF': 8000.0,
+    'MAX': 100.0,
+    'SEELE': 1180.0,
+};
 
 //  ---------------------------------------------------------------------------
 
@@ -134,6 +155,8 @@ module.exports = class max extends Exchange {
             },
             'fees': {
                 'trading': {
+                    'maker': 0.05 / 100,
+                    'taker': 0.15 / 100,
                 },
                 'funding': {
                     'withdraw': {},
@@ -207,7 +230,7 @@ module.exports = class max extends Exchange {
                 'precision': this.safeInteger (currency, 'precision'),
                 'limits': {
                     'amount': {
-                        'min': undefined,
+                        'min': CURRENCY_MIN[code],
                         'max': undefined,
                     },
                     'price': {
@@ -268,6 +291,11 @@ module.exports = class max extends Exchange {
                 'info': market,
                 'active': active,
                 'precision': precision,
+                'limits': {
+                    'amount': {
+                        'min': CURRENCY_MIN[base],
+                    },
+                },
                 // TODO market.limits
             };
             result.push (entry);
