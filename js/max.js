@@ -6,6 +6,9 @@ const Exchange = require ('./base/Exchange');
 const { ExchangeError, ArgumentsRequired, ExchangeNotAvailable, InsufficientFunds, OrderNotFound, InvalidOrder, DDoSProtection, InvalidNonce, AuthenticationError, InvalidAddress } = require ('./base/errors');
 const { ROUND } = require ('./base/functions/number');
 const { prop, asInteger, isNumber } = require ('./base/functions/type');
+
+/*  ------------------------------------------------------------------------ */
+
 const CURRENCY_MIN = {
     'TWD': 250,
     'BTC': 0.0015,
@@ -27,8 +30,6 @@ const CURRENCY_MIN = {
     'MAX': 100.0,
     'SEELE': 1180.0,
 };
-
-//  ---------------------------------------------------------------------------
 
 module.exports = class max extends Exchange {
     describe () {
@@ -170,6 +171,17 @@ module.exports = class max extends Exchange {
                 'adjustForTimeDifference': false, // controls the adjustment logic upon instantiation
             },
             'exceptions': {
+                '2004': OrderNotFound,
+                '2005': AuthenticationError, // Signature is incorrect.
+                '2006': AuthenticationError, // The nonce has already been used by access key.
+                '2007': AuthenticationError, // The nonce is invalid. (30 secconds difference from server time)
+                '2008': AuthenticationError, // The access key does not exist.
+                '2009': AuthenticationError, // The access key is disabled.
+                '2011': AuthenticationError, // Requested API is out of access key scopes.
+                '2014': AuthenticationError, // Payload is not consistent with body or wrong path in payload.
+                '2015': AuthenticationError, // Payload is invalid
+                '2016': InvalidOrder, // amount_too_small
+                '2018': InsufficientFunds, // cannot lock funds
             },
         });
     }
@@ -310,8 +322,9 @@ module.exports = class max extends Exchange {
         for (let i = 0; i < response.length; i++) {
             const balance = response[i];
             let currency = balance['currency'];
-            if (currency in this.currencies_by_id)
+            if (currency in this.currencies_by_id) {
                 currency = this.currencies_by_id[currency]['code'];
+            }
             const account = this.account ();
             account['free'] = this.safeFloat (balance, 'balance');
             account['used'] = this.safeFloat (balance, 'locked');
@@ -327,8 +340,9 @@ module.exports = class max extends Exchange {
         const request = {
             'market': market['id'],
         };
-        if (limit !== undefined)
+        if (limit !== undefined) {
             request['limit'] = limit; // default = 300
+        }
         const response = await this.publicGetDepth (this.extend (request, params));
         const timestamp = this.safeTimestampThousand (response, 'timestamp');
         const orderbook = this.parseOrderBook (response, timestamp);
@@ -426,9 +440,9 @@ module.exports = class max extends Exchange {
         let address = this.safeString (depositAddress, 'address');
         let tag = undefined;
         if (code === 'XRP' && address) {
-          const splitted = address.split('?dt=');
-          address = splitted[0];
-          tag = splitted[1];
+            const splitted = address.split ('?dt=');
+            address = splitted[0];
+            tag = splitted[1];
         }
         this.checkAddress (address);
         return {
@@ -478,7 +492,7 @@ module.exports = class max extends Exchange {
         const id = this.safeString (transaction, 'uuid');
         const txid = this.safeString (transaction, 'txid');
         let code = undefined;
-        console.log ('currency', currency);
+        // console.log ('currency', currency);
         const currencyId = this.safeString (transaction, 'currency');
         if (currencyId in this.currencies_by_id) {
             currency = this.currencies_by_id[currencyId];
@@ -590,7 +604,7 @@ module.exports = class max extends Exchange {
                 'currency': this.commonCurrencyCode (trade['fee_currency']),
             };
         }
-        let takerOrMaker = undefined; // TODO takerOrMaker
+        const takerOrMaker = undefined; // TODO takerOrMaker
         let symbol = undefined;
         if (market === undefined) {
             const marketId = this.safeString (trade, 'market');
@@ -634,15 +648,17 @@ module.exports = class max extends Exchange {
     }
 
     async fetchMyTrades (symbol = undefined, since = undefined, limit = undefined, params = {}) {
-        if (symbol === undefined)
+        if (symbol === undefined) {
             throw new ArgumentsRequired (this.id + ' fetchMyTrades requires a symbol argument');
+        }
         await this.loadMarkets ();
         const market = this.market (symbol);
         const request = {
             'market': market['id'],
         };
-        if (limit !== undefined)
+        if (limit !== undefined) {
             request['limit'] = limit;
+        }
         // timestamp : the seconds elapsed since Unix epoch, set to return trades executed before the time only
         // if (since !== undefined)
         //     request['timestamp'] = since;
@@ -651,7 +667,7 @@ module.exports = class max extends Exchange {
     }
 
     parseOrderStatus (status) {
-        let statuses = {
+        const statuses = {
             'wait': 'open',
             'cancel': 'canceled',
             'done': 'closed',
@@ -762,8 +778,9 @@ module.exports = class max extends Exchange {
     }
 
     async fetchOrder (id) {
-        if (id === undefined)
+        if (id === undefined) {
             throw new ArgumentsRequired (this.id + ' fetchOrder requires a id argument');
+        }
         await this.loadMarkets ();
         const request = {
             'id': id,
@@ -773,8 +790,9 @@ module.exports = class max extends Exchange {
     }
 
     async fetchOrders (symbol = undefined, since = undefined, limit = undefined, params = {}) {
-        if (symbol === undefined)
+        if (symbol === undefined) {
             throw new ArgumentsRequired (this.id + ' fetchOrders requires a symbol argument');
+        }
         await this.loadMarkets ();
         const market = this.market (symbol);
         const request = {
@@ -796,7 +814,7 @@ module.exports = class max extends Exchange {
     }
 
     sign (path, api = 'public', method = 'GET', params = {}, headers = undefined, body = undefined) {
-        console.log('sign in', {
+        false && console.log ('sign', {
             path,
             api,
             method,
@@ -832,7 +850,7 @@ module.exports = class max extends Exchange {
                 'Content-Type': 'application/json',
             });
         }
-        console.log({
+        false && console.log ({
             url,
             method,
             headers,
@@ -844,6 +862,22 @@ module.exports = class max extends Exchange {
             'body': body,
             'headers': headers,
         };
+    }
+
+    handleErrors (httpCode, reason, url, method, headers, body, response) {
+        if (response === undefined) {
+            return; // fallback to default error handler
+        }
+        if ('error' in response && 'code' in response.error) {
+            const code = this.safeString (response.error, 'code');
+            const feedback = this.id + ' ' + this.safeString (response.error, 'message');
+            const exceptions = this.exceptions;
+            if (code in exceptions) {
+                throw new exceptions[code] (feedback);
+            } else {
+                throw new ExchangeError (feedback);
+            }
+        }
     }
 };
 
