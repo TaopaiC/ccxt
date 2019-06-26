@@ -38,7 +38,7 @@ module.exports = class max extends Exchange {
             'name': 'Max',
             'countries': [ 'TW' ],
             'rateLimit': 1200,
-            'cretified': false,
+            'certified': false,
             'has': {
                 'CORS': true,
                 'publicAPI': true,
@@ -46,7 +46,7 @@ module.exports = class max extends Exchange {
 
                 'cancelAllOrders': true,
                 'cancelOrder': true,
-                'createDepositAddress': false,
+                'createDepositAddress': true,
                 'createLimitOrder': true,
                 'createMarketOrder': true,
                 'createOrder': true,
@@ -55,10 +55,10 @@ module.exports = class max extends Exchange {
                 'fetchBidsAsks': false,
                 'fetchClosedOrders': true,
                 'fetchCurrencies': true,
-                'fetchDepositAddress': false,
+                'fetchDepositAddress': true,
                 'fetchDeposits': false,
                 'fetchFundingFees': false,
-                'fetchL2OrderBook': true,
+                'fetchL2OrderBook': false,
                 'fetchLedger': false,
                 'fetchMarkets': true,
                 'fetchMyTrades': true,
@@ -75,7 +75,7 @@ module.exports = class max extends Exchange {
                 'fetchTradingFees': false,
                 'fetchTradingLimits': false,
                 'fetchTransactions': false,
-                'fetchWithdrawals': false,
+                'fetchWithdrawals': true,
                 'withdraw': false,
             },
             'timeframes': {
@@ -98,8 +98,6 @@ module.exports = class max extends Exchange {
                     'wapi': '',
                     'public': 'https://max-api.maicoin.com/api/v2',
                     'private': 'https://max-api.maicoin.com/api/v2',
-                    // 'private': 'http://localhost:8080/',
-                    // 'v2': 'https://max-api.maicoin.com/api/v2',
                 },
                 'www': 'https://max.maicoin.com',
                 'doc': 'https://max.maicoin.com/documents/api',
@@ -353,6 +351,8 @@ module.exports = class max extends Exchange {
         const timestamp = this.safeTimestampThousand (ticker, 'at');
         const symbol = this.findSymbol (tickerSymbol, market);
         const last = this.safeFloat (ticker, 'last');
+        const open = this.safeFloat (ticker, 'open');
+        const change = last - open;
         return {
             'symbol': symbol,
             'timestamp': timestamp,
@@ -364,13 +364,13 @@ module.exports = class max extends Exchange {
             'ask': this.safeFloat (ticker, 'sell'),
             'askVolume': undefined,
             'vwap': undefined,
-            'open': this.safeFloat (ticker, 'open'),
+            'open': open,
             'close': last,
             'last': last,
             'previousClose': undefined,
-            'change': undefined,
-            'percentage': undefined,
-            'average': undefined,
+            'change': change,
+            'percentage': (change / open) * 100,
+            'average': (last + open) / 2,
             'baseVolume': this.safeFloat (ticker, 'vol'),
             'quoteVolume': undefined,
             'info': ticker,
@@ -546,12 +546,24 @@ module.exports = class max extends Exchange {
         const request = {};
         if (code !== undefined) {
             currency = this.currency (code);
-            request['asset'] = currency['id'];
+            request['currency'] = currency['id'];
         }
         // timestamp : the seconds elapsed since Unix epoch, set to return trades executed before the time only
         // if (timestamp !== undefined) {
         //     request['timestamp'] = timestamp;
         // }
+        const response = await this.privateGetWithdrawals (this.extend (request, params));
+        return this.parseTransactions (response, currency, since, limit);
+    }
+
+    async fetchDeposits (code = undefined, since = undefined, limit = undefined, params = {}) {
+        await this.loadMarkets ();
+        let currency = undefined;
+        const request = {};
+        if (code !== undefined) {
+            currency = this.currency (code);
+            request['currency'] = currency['id'];
+        }
         const response = await this.privateGetWithdrawals (this.extend (request, params));
         return this.parseTransactions (response, currency, since, limit);
     }
