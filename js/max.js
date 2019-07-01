@@ -9,6 +9,7 @@ const { prop, asInteger, isNumber } = require ('./base/functions/type');
 
 /*  ------------------------------------------------------------------------ */
 
+// https://max.maicoin.com/docs/limits
 const CURRENCY_MIN = {
     'TWD': 250,
     'BTC': 0.0015,
@@ -29,6 +30,7 @@ const CURRENCY_MIN = {
     'FMF': 8000.0,
     'MAX': 100.0,
     'SEELE': 1180.0,
+    'BCNT': 300.0,
 };
 
 module.exports = class max extends Exchange {
@@ -285,10 +287,8 @@ module.exports = class max extends Exchange {
             const quote = this.commonCurrencyCode (quoteId).toUpperCase ();
             const symbol = base + '/' + quote;
             const precision = {
-                'base': market['base_unit_precision'],
-                'quote': market['quote_unit_precision'],
-                // TODO 'amount'
-                // TODO 'price
+                'amount': market['base_unit_precision'],
+                'price': market['quote_unit_precision'],
             };
             const active = true;
             const entry = {
@@ -304,9 +304,17 @@ module.exports = class max extends Exchange {
                 'limits': {
                     'amount': {
                         'min': CURRENCY_MIN[base],
+                        'max': undefined,
+                    },
+                    'price': {
+                        'min': CURRENCY_MIN[quote],
+                        'max': undefined,
+                    },
+                    'cost': {
+                        'min': undefined,
+                        'max': undefined,
                     },
                 },
-                // TODO market.limits
             };
             result.push (entry);
         }
