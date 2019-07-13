@@ -228,7 +228,7 @@ module.exports = class max extends Exchange {
         for (let i = 0; i < response.length; i++) {
             const currency = response[i];
             const id = currency['id'];
-            const code = this.commonCurrencyCode (id).toUpperCase ();
+            const code = this.safeCurrencyCode (id);
             const fiat = id === 'twd' ? true : false;
             const withdrawal = this.safeValue (currency, 'withdrawal');
             const withdrawalFee = this.safeValue (withdrawal, 'fee');
@@ -283,8 +283,8 @@ module.exports = class max extends Exchange {
             const id = market['id'];
             const baseId = market['base_unit'];
             const quoteId = market['quote_unit'];
-            const base = this.commonCurrencyCode (baseId).toUpperCase ();
-            const quote = this.commonCurrencyCode (quoteId).toUpperCase ();
+            const base = this.safeCurrencyCode (baseId);
+            const quote = this.safeCurrencyCode (quoteId);
             const symbol = base + '/' + quote;
             const precision = {
                 'amount': market['base_unit_precision'],
@@ -334,7 +334,7 @@ module.exports = class max extends Exchange {
             const account = this.account ();
             account['free'] = this.safeFloat (balance, 'balance');
             account['used'] = this.safeFloat (balance, 'locked');
-            account['total'] = account['free'] + account['used'];
+            account['total'] = this.sum (account['free'], account['used']);
             result[currency] = account;
         }
         return this.parseBalance (result);
@@ -499,18 +499,9 @@ module.exports = class max extends Exchange {
     parseTransaction (transaction, currency = undefined) {
         const id = this.safeString (transaction, 'uuid');
         const txid = this.safeString (transaction, 'txid');
-        let code = undefined;
         // console.log ('currency', currency);
         const currencyId = this.safeString (transaction, 'currency');
-        if (currencyId in this.currencies_by_id) {
-            currency = this.currencies_by_id[currencyId];
-        } else {
-            code = this.commonCurrencyCode (currencyId);
-        }
-        // TODO why?
-        if (currency !== undefined) {
-            code = currency['code'];
-        }
+        const code = this.safeCurrencyCode (currencyId, currency);
         const timestamp = this.safeTimestampThousand (transaction, 'created_at');
         const updated = this.safeTimestampThousand (transaction, 'updated_at');
         const amount = this.safeFloat (transaction, 'amount');
@@ -522,7 +513,7 @@ module.exports = class max extends Exchange {
         if (feeCurrency !== undefined) {
             feeCurrencyId = feeCurrency['code'];
         } else {
-            feeCurrencyId = this.commonCurrencyCode (feeCurrencyId);
+            feeCurrencyId = this.safeCurrencyCode (feeCurrencyId);
         }
         const fee = {
             'cost': this.safeFloat (transaction, 'fee'),
@@ -621,7 +612,7 @@ module.exports = class max extends Exchange {
         if ('fee' in trade) {
             fee = {
                 'cost': this.safeFloat (trade, 'fee'),
-                'currency': this.commonCurrencyCode (trade['fee_currency']),
+                'currency': this.safeCurrencyCode (trade['fee_currency']),
             };
         }
         const takerOrMaker = undefined; // TODO takerOrMaker
