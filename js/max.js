@@ -3,35 +3,7 @@
 //  ---------------------------------------------------------------------------
 
 const Exchange = require ('./base/Exchange');
-const { ExchangeError, ArgumentsRequired, ExchangeNotAvailable, InsufficientFunds, OrderNotFound, InvalidOrder, DDoSProtection, InvalidNonce, AuthenticationError, InvalidAddress } = require ('./base/errors');
-const { ROUND } = require ('./base/functions/number');
-const { prop, asInteger, isNumber } = require ('./base/functions/type');
-
-/*  ------------------------------------------------------------------------ */
-
-// https://max.maicoin.com/docs/limits
-const CURRENCY_MIN = {
-    'TWD': 250,
-    'BTC': 0.0015,
-    'ETH': 0.05,
-    'LTC': 0.1112,
-    'BCH': 0.03,
-    'MITH': 190.0,
-    'USDT': 8.0,
-    'TRX': 340.0,
-    'CCCX': 2100.0,
-    'EOS': 1.7,
-    'BAT': 20.0,
-    'ZRX': 30.0,
-    'GNT': 110.0,
-    'OMG': 5.0,
-    'KNC': 36.0,
-    'XRP': 27.0,
-    'FMF': 8000.0,
-    'MAX': 100.0,
-    'SEELE': 1180.0,
-    'BCNT': 300.0,
-};
+const { ExchangeError, ArgumentsRequired, InsufficientFunds, OrderNotFound, InvalidOrder, AuthenticationError } = require ('./base/errors');
 
 module.exports = class max extends Exchange {
     describe () {
@@ -39,13 +11,13 @@ module.exports = class max extends Exchange {
             'id': 'max',
             'name': 'Max',
             'countries': [ 'TW' ],
+            'version': 'v2',
             'rateLimit': 1200,
             'certified': false,
             'has': {
                 'CORS': true,
                 'publicAPI': true,
                 'privateAPI': true,
-
                 'cancelAllOrders': true,
                 'cancelOrder': true,
                 'createDepositAddress': true,
@@ -98,8 +70,8 @@ module.exports = class max extends Exchange {
                 'api': {
                     'web': 'https://max.maicoin.com',
                     'wapi': '',
-                    'public': 'https://max-api.maicoin.com/api/v2',
-                    'private': 'https://max-api.maicoin.com/api/v2',
+                    'public': 'https://max-api.maicoin.com',
+                    'private': 'https://max-api.maicoin.com',
                 },
                 'www': 'https://max.maicoin.com',
                 'doc': 'https://max.maicoin.com/documents/api',
@@ -211,7 +183,12 @@ module.exports = class max extends Exchange {
                 result[index][insertKey] = entry;
             }
         }
-        return Object.values (result);
+        const values = [];
+        const resultKeys = Object.keys (result);
+        for (let i = 0; i < resultKeys.length; i++) {
+            values.push (result[resultKeys[i]]);
+        }
+        return values;
     }
 
     async fetchCurrencies (params = {}) {
@@ -242,7 +219,7 @@ module.exports = class max extends Exchange {
                 'precision': this.safeInteger (currency, 'precision'),
                 'limits': {
                     'amount': {
-                        'min': CURRENCY_MIN[code],
+                        'min': undefined,
                         'max': undefined,
                     },
                     'price': {
@@ -303,11 +280,11 @@ module.exports = class max extends Exchange {
                 'precision': precision,
                 'limits': {
                     'amount': {
-                        'min': CURRENCY_MIN[base],
+                        'min': undefined,
                         'max': undefined,
                     },
                     'price': {
-                        'min': CURRENCY_MIN[quote],
+                        'min': undefined,
                         'max': undefined,
                     },
                     'cost': {
@@ -350,13 +327,13 @@ module.exports = class max extends Exchange {
             request['limit'] = limit; // default = 300
         }
         const response = await this.publicGetDepth (this.extend (request, params));
-        const timestamp = this.safeTimestampThousand (response, 'timestamp');
+        const timestamp = this.safeTimestamp (response, 'timestamp');
         const orderbook = this.parseOrderBook (response, timestamp);
         return orderbook;
     }
 
     parseTicker (ticker, tickerSymbol, market = undefined) {
-        const timestamp = this.safeTimestampThousand (ticker, 'at');
+        const timestamp = this.safeTimestamp (ticker, 'at');
         const symbol = this.findSymbol (tickerSymbol, market);
         const last = this.safeFloat (ticker, 'last');
         const open = this.safeFloat (ticker, 'open');
@@ -396,10 +373,12 @@ module.exports = class max extends Exchange {
 
     parseTickers (rawTickers, symbols = undefined) {
         const tickers = [];
-        Object.keys (rawTickers).forEach ((key) => {
+        const tickerKeys = Object.keys (rawTickers);
+        for (let i = 0; i < tickerKeys.length; i++) {
+            const key = tickerKeys[i];
             const rawTicker = rawTickers[key];
             tickers.push (this.parseTicker (rawTicker, key));
-        });
+        }
         return this.filterByArray (tickers, 'symbol', symbols);
     }
 
@@ -502,8 +481,8 @@ module.exports = class max extends Exchange {
         // console.log ('currency', currency);
         const currencyId = this.safeString (transaction, 'currency');
         const code = this.safeCurrencyCode (currencyId, currency);
-        const timestamp = this.safeTimestampThousand (transaction, 'created_at');
-        const updated = this.safeTimestampThousand (transaction, 'updated_at');
+        const timestamp = this.safeTimestamp (transaction, 'created_at');
+        const updated = this.safeTimestamp (transaction, 'updated_at');
         const amount = this.safeFloat (transaction, 'amount');
         let feeCurrencyId = this.safeString (transaction, 'currency');
         let feeCurrency = undefined;
@@ -567,10 +546,6 @@ module.exports = class max extends Exchange {
         return this.parseTransactions (response, currency, since, limit);
     }
 
-    safeTimestampThousand (o, k, $default, n = asInteger (prop (o, k))) {
-        return isNumber (n) ? n * 1000 : $default;
-    }
-
     parseTrade (trade, market = undefined) {
         //
         // public trades
@@ -602,7 +577,7 @@ module.exports = class max extends Exchange {
         //        "fee_currency": "usdt",
         //        "order_id": 18298466
         //    }
-        const timestamp = this.safeTimestampThousand (trade, 'created_at');
+        const timestamp = this.safeTimestamp (trade, 'created_at');
         const price = this.safeFloat (trade, 'price');
         const amount = this.safeFloat (trade, 'volume');
         const id = this.safeInteger (trade, 'id');
@@ -692,8 +667,8 @@ module.exports = class max extends Exchange {
     parseOrder (order) {
         const status = this.parseOrderStatus (this.safeString (order, 'state'));
         const symbol = this.findSymbol (this.safeString (order, 'market'));
-        const timestamp = this.safeTimestampThousand (order, 'created_at');
-        const lastTradeTimestamp = this.safeTimestampThousand (order, 'updated_at');
+        const timestamp = this.safeTimestamp (order, 'created_at');
+        const lastTradeTimestamp = this.safeTimestamp (order, 'updated_at');
         const id = this.safeInteger (order, 'id');
         let price = this.safeFloat (order, 'price');
         const amount = this.safeFloat (order, 'volume');
@@ -788,7 +763,7 @@ module.exports = class max extends Exchange {
         return this.parseOrder (response);
     }
 
-    async fetchOrder (id) {
+    async fetchOrder (id, symbol = undefined, params = {}) {
         if (id === undefined) {
             throw new ArgumentsRequired (this.id + ' fetchOrder requires a id argument');
         }
@@ -825,23 +800,15 @@ module.exports = class max extends Exchange {
     }
 
     sign (path, api = 'public', method = 'GET', params = {}, headers = undefined, body = undefined) {
-        false && console.log ('sign', {
-            path,
-            api,
-            method,
-            params,
-            headers,
-            body,
-        });
         let newParams = params;
+        const request = '/' + this.version + this.implodeParams (path, params);
         let url = this.urls['api'][api];
-        url += '/' + this.implodeParams (path, params);
+        url += request;
         if (api === 'private') {
             this.checkRequiredCredentials ();
-            const payloadPath = url.replace (/^.*\/\/[^/]+/, '');
             newParams = this.extend (params, {
                 'nonce': this.nonce (),
-                'path': payloadPath,
+                'path': request,
             });
             const payload = this.stringToBase64 (this.json (newParams));
             const signature = this.hmac (payload, this.secret);
@@ -861,12 +828,6 @@ module.exports = class max extends Exchange {
                 'Content-Type': 'application/json',
             });
         }
-        false && console.log ({
-            url,
-            method,
-            headers,
-            body,
-        });
         return {
             'url': url,
             'method': method,
@@ -875,16 +836,16 @@ module.exports = class max extends Exchange {
         };
     }
 
-    handleErrors (httpCode, reason, url, method, headers, body, response) {
+    handleErrors (httpCode, reason, url, method, headers, body, response, requestHeaders, requestBody) {
         if (response === undefined) {
             return; // fallback to default error handler
         }
-        if ('error' in response && 'code' in response.error) {
-            const code = this.safeString (response.error, 'code');
-            const feedback = this.id + ' ' + this.safeString (response.error, 'message');
-            const exceptions = this.exceptions;
-            if (code in exceptions) {
-                throw new exceptions[code] (feedback);
+        const error = this.safeString (response, 'error');
+        const code = this.safeString (error, 'code');
+        if (code) {
+            const feedback = this.id + ' ' + this.safeString (error, 'message');
+            if (code in this.exceptions) {
+                throw new this.exceptions[code] (feedback);
             } else {
                 throw new ExchangeError (feedback);
             }
