@@ -812,6 +812,9 @@ module.exports = class max extends Exchange {
             });
             const payload = this.stringToBase64 (this.json (newParams));
             const signature = this.hmac (payload, this.secret);
+            if (!headers) {
+                headers = {};
+            }
             headers = this.extend (headers, {
                 'X-MAX-ACCESSKEY': this.apiKey,
                 'X-MAX-PAYLOAD': payload,
@@ -824,6 +827,9 @@ module.exports = class max extends Exchange {
             }
         } else {
             body = this.json (newParams);
+            if (!headers) {
+                headers = {};
+            }
             headers = this.extend (headers, {
                 'Content-Type': 'application/json',
             });
