@@ -801,7 +801,7 @@ module.exports = class max extends Exchange {
 
     sign (path, api = 'public', method = 'GET', params = {}, headers = undefined, body = undefined) {
         let newParams = params;
-        const request = '/' + this.version + this.implodeParams (path, params);
+        const request = '/api/' + this.version + '/' + this.implodeParams (path, params);
         let url = this.urls['api'][api];
         url += request;
         if (api === 'private') {
@@ -841,7 +841,10 @@ module.exports = class max extends Exchange {
             return; // fallback to default error handler
         }
         const error = this.safeString (response, 'error');
-        const code = this.safeString (error, 'code');
+        if (typeof error === 'string') {
+            return;
+        }
+        const code = error && this.safeString (error, 'code');
         if (code) {
             const feedback = this.id + ' ' + this.safeString (error, 'message');
             if (code in this.exceptions) {
