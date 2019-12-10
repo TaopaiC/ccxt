@@ -180,6 +180,7 @@ class Exchange {
         'luno',
         'lykke',
         'mandala',
+        'max',
         'mercado',
         'mixcoins',
         'oceanex',

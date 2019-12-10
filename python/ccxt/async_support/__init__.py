@@ -144,6 +144,7 @@ from ccxt.async_support.livecoin import livecoin                          # noqa
 from ccxt.async_support.luno import luno                                  # noqa: F401
 from ccxt.async_support.lykke import lykke                                # noqa: F401
 from ccxt.async_support.mandala import mandala                            # noqa: F401
+from ccxt.async_support.max import max                                    # noqa: F401
 from ccxt.async_support.mercado import mercado                            # noqa: F401
 from ccxt.async_support.mixcoins import mixcoins                          # noqa: F401
 from ccxt.async_support.oceanex import oceanex                            # noqa: F401
@@ -269,6 +270,7 @@ exchanges = [
     'luno',
     'lykke',
     'mandala',
+    'max',
     'mercado',
     'mixcoins',
     'oceanex',

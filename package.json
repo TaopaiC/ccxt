@@ -484,7 +484,9 @@
     "{hostname}",
     "bw.com",
     "stex.com",
-    "STEX"
+    "STEX",
+    "max.maicoin.com",
+    "Max"
   ],
   "collective": {
     "type": "opencollective",
