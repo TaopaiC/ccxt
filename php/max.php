@@ -15,19 +15,20 @@ class max extends Exchange {
             'name' => 'Max',
             'countries' => array ( 'TW' ),
             'version' => 'v2',
+            'enableRateLimit' => false,
             'rateLimit' => 1200,
             'certified' => false,
             'has' => array (
-                'CORS' => true,
-                'publicAPI' => true,
-                'privateAPI' => true,
                 'cancelAllOrders' => true,
                 'cancelOrder' => true,
+                'cancelOrders' => false,
+                'CORS' => true,
                 'createDepositAddress' => true,
                 'createLimitOrder' => true,
                 'createMarketOrder' => true,
                 'createOrder' => true,
                 'deposit' => false,
+                'editOrder' => 'emulated',
                 'fetchBalance' => true,
                 'fetchBidsAsks' => false,
                 'fetchClosedOrders' => true,
@@ -45,28 +46,19 @@ class max extends Exchange {
                 'fetchOrderBook' => true,
                 'fetchOrderBooks' => false,
                 'fetchOrders' => true,
+                'fetchStatus' => 'emulated',
                 'fetchTicker' => true,
                 'fetchTickers' => true,
+                'fetchTime' => true,
                 'fetchTrades' => true,
                 'fetchTradingFee' => false,
                 'fetchTradingFees' => false,
                 'fetchTradingLimits' => false,
                 'fetchTransactions' => false,
                 'fetchWithdrawals' => true,
+                'privateAPI' => true,
+                'publicAPI' => true,
                 'withdraw' => false,
-            ),
-            'timeframes' => array (
-                '1m' => '1',
-                '5m' => '5',
-                '15m' => '15',
-                '30m' => '30',
-                '1h' => '60',
-                '2h' => '120',
-                '6h' => '360',
-                '12h' => '720',
-                '1d' => '1440',
-                '3d' => '4320',
-                '1w' => '10080',
             ),
             'urls' => array (
                 'logo' => '',
@@ -129,6 +121,20 @@ class max extends Exchange {
                     ),
                 ),
             ),
+            'timeframes' => array (
+                '1m' => '1',
+                '5m' => '5',
+                '15m' => '15',
+                '30m' => '30',
+                '1h' => '60',
+                '2h' => '120',
+                '4h' => '240',
+                '6h' => '360',
+                '12h' => '720',
+                '1d' => '1440',
+                '3d' => '4320',
+                '1w' => '10080',
+            ),
             'fees' => array (
                 'trading' => array (
                     'maker' => 0.05 / 100,
@@ -142,7 +148,7 @@ class max extends Exchange {
             'commonCurrencies' => array (
             ),
             'options' => array (
-                'timeDifference' => 0, // the difference between system clock and Binance clock
+                'timeDifference' => 0, // the difference between system clock and Max clock
                 'adjustForTimeDifference' => false, // controls the adjustment logic upon instantiation
             ),
             'exceptions' => array (
@@ -161,14 +167,19 @@ class max extends Exchange {
         ));
     }
 
+    public function fetch_time ($params = array ()) {
+        $response = $this->publicGetTimestamp ();
+        return intval ($response, 10) * 1000;
+    }
+
     public function nonce () {
         return $this->milliseconds () - $this->options['timeDifference'];
     }
 
     public function load_time_difference () {
-        $serverTimestamp = $this->publicGetTimestamp ();
+        $serverTimestamp = $this->fetch_time ();
         $after = $this->milliseconds ();
-        $this->options['timeDifference'] = $after - intval ($serverTimestamp, 10) * 1000;
+        $this->options['timeDifference'] = $after - $serverTimestamp;
         return $this->options['timeDifference'];
     }
 
@@ -335,9 +346,9 @@ class max extends Exchange {
         return $orderbook;
     }
 
-    public function parse_ticker ($ticker, $tickerSymbol, $market = null) {
+    public function parse_ticker ($ticker, $market = null) {
         $timestamp = $this->safe_timestamp($ticker, 'at');
-        $symbol = $this->find_symbol($tickerSymbol, $market);
+        $symbol = $this->find_symbol($this->safe_string($ticker, 'symbol'), $market);
         $last = $this->safe_float($ticker, 'last');
         $open = $this->safe_float($ticker, 'open');
         $change = $last - $open;
@@ -358,7 +369,7 @@ class max extends Exchange {
             'previousClose' => null,
             'change' => $change,
             'percentage' => ($change / $open) * 100,
-            'average' => ($last . $open) / 2,
+            'average' => null,
             'baseVolume' => $this->safe_float($ticker, 'vol'),
             'quoteVolume' => null,
             'info' => $ticker,
@@ -371,29 +382,29 @@ class max extends Exchange {
         $response = $this->publicGetTickersMarketId (array_merge (array (
             'market_id' => $market['id'],
         ), $params));
-        return $this->parse_ticker($response, $market['id'], $market);
-    }
-
-    public function parse_tickers ($rawTickers, $symbols = null) {
-        $tickers = array();
-        $tickerKeys = is_array($rawTickers) ? array_keys($rawTickers) : array();
-        for ($i = 0; $i < count ($tickerKeys); $i++) {
-            $key = $tickerKeys[$i];
-            $rawTicker = $rawTickers[$key];
-            $tickers[] = $this->parse_ticker($rawTicker, $key);
-        }
-        return $this->filter_by_array($tickers, 'symbol', $symbols);
+        $response['symbol'] = $market['id'];
+        return $this->parse_ticker($response, $market);
     }
 
     public function fetch_tickers ($symbols = null, $params = array ()) {
         $this->load_markets();
-        $rawTickers = $this->publicGetTickers ($params);
-        return $this->parse_tickers ($rawTickers, $symbols);
+        $response = $this->publicGetTickers ($params);
+        $tickerKeys = is_array($response) ? array_keys($response) : array();
+        $result = array();
+        for ($i = 0; $i < count ($tickerKeys); $i++) {
+            $key = $tickerKeys[$i];
+            $response[$key]['symbol'] = $key;
+            $ticker = $this->parse_ticker($response[$key]);
+            if ($symbols === null || mb_strpos($symbols, $ticker['symbol'])) {
+                $result[$ticker['symbol']] = $ticker;
+            }
+        }
+        return $result;
     }
 
     public function parse_ohlcv ($ohlcv, $market = null, $timeframe = '1m', $since = null, $limit = null) {
         return [
-            $ohlcv[0],
+            intval ($ohlcv[0]) * 1000,
             floatval ($ohlcv[1]),
             floatval ($ohlcv[2]),
             floatval ($ohlcv[3]),
@@ -410,7 +421,7 @@ class max extends Exchange {
             'period' => $this->timeframes[$timeframe],
         );
         if ($since !== null) {
-            $request['timestamp'] = $since;
+            $request['timestamp'] = intval ($since) / 1000;
         }
         if ($limit !== null) {
             $request['limit'] = $limit; // default = 30
@@ -420,14 +431,14 @@ class max extends Exchange {
     }
 
     public function parse_deposit_address ($code, $response) {
-        $depositAddress = null;
-        if (strlen ($response) <= 1) {
-            $depositAddress = $response[0];
-        } else {
-            // TODO for multiple deposit $address
-            $depositAddress = $response[0];
+        if (strlen ($response) < 1) {
+            throw new InvalidAddress($this->id . ' fetchDepositAddress ' . $code . ' returned empty $address->');
         }
+        $depositAddress = $response[0];
         $address = $this->safe_string($depositAddress, 'address');
+        if ($address === 'suspended') {
+            throw new InvalidAddress($this->id . ' fetchDepositAddress ' . $code . ' returned an suspended $address->');
+        }
         $tag = null;
         if ($code === 'XRP' && $address) {
             $splitted = explode('?dt=', $address);
@@ -469,10 +480,34 @@ class max extends Exchange {
         }
         $statuses = array (
             'deposit' => array (
+                'submitting' => 'pending',
+                'cancelled' => 'canceled',
+                'submitted' => 'pending',
+                'suspended' => 'pending',
+                'rejected' => 'failed',
+                'accepted' => 'ok',
+                'refunded' => 'failed',
+                'suspect' => 'pending',
+                'refund_cancelled' => 'ok',
             ),
             'withdrawal' => array (
+                'submitting' => 'pending',
+                'submitted' => 'pending',
+                'rejected' => 'failed',
+                'accepted' => 'pending',
+                'suspect' => 'pending',
+                'approved' => 'pending',
+                'processing' => 'pending',
+                'retryable' => 'pending',
                 'sent' => 'pending',
+                'canceled' => 'canceled',
+                'failed' => 'failed',
+                'pending' => 'pending',
                 'confirmed' => 'ok',
+                'kgi_manually_processing' => 'pending',
+                'kgi_instruction_sent' => 'pending',
+                'kgi_manually_confirmed' => 'ok',
+                'kgi_possible_failed' => 'pending',
             ),
         );
         return (is_array($statuses[$type]) && array_key_exists($status, $statuses[$type])) ? $statuses[$type][$status] : $status;
@@ -487,7 +522,7 @@ class max extends Exchange {
         $timestamp = $this->safe_timestamp($transaction, 'created_at');
         $updated = $this->safe_timestamp($transaction, 'updated_at');
         $amount = $this->safe_float($transaction, 'amount');
-        $feeCurrencyId = $this->safe_string($transaction, 'currency');
+        $feeCurrencyId = $this->safe_string($transaction, 'fee_currency');
         $feeCurrency = null;
         if (is_array($this->currencies_by_id) && array_key_exists($feeCurrencyId, $this->currencies_by_id)) {
             $feeCurrency = $this->currencies_by_id[$feeCurrencyId];
@@ -501,8 +536,7 @@ class max extends Exchange {
             'cost' => $this->safe_float($transaction, 'fee'),
             'currency' => $feeCurrencyId,
         );
-        // TODO $type
-        $type = 'withdrawal';
+        $type = $this->safe_string($transaction, 'type');
         $status = $this->parse_transaction_status_by_type ($this->safe_string($transaction, 'state'), $type);
         return array (
             'info' => $transaction,
@@ -529,11 +563,16 @@ class max extends Exchange {
             $currency = $this->currency ($code);
             $request['currency'] = $currency['id'];
         }
-        // timestamp : the seconds elapsed $since Unix epoch, set to return trades executed before the time only
-        // if (timestamp !== null) {
-        //     $request['timestamp'] = timestamp;
-        // }
+        if ($since !== null) {
+            $request['from'] = (int) floor(intval ($since, 10) / 1000);
+        }
+        if ($limit !== null) {
+            $request['limit'] = $limit;
+        }
         $response = $this->privateGetWithdrawals (array_merge ($request, $params));
+        for ($i = 0; $i < count ($response); $i++) {
+            $response[$i]['type'] = 'withdrawal';
+        }
         return $this->parse_transactions($response, $currency, $since, $limit);
     }
 
@@ -545,7 +584,16 @@ class max extends Exchange {
             $currency = $this->currency ($code);
             $request['currency'] = $currency['id'];
         }
-        $response = $this->privateGetWithdrawals (array_merge ($request, $params));
+        if ($since !== null) {
+            $request['from'] = (int) floor(intval ($since, 10) / 1000);
+        }
+        if ($limit !== null) {
+            $request['limit'] = $limit;
+        }
+        $response = $this->privateGetDeposits (array_merge ($request, $params));
+        for ($i = 0; $i < count ($response); $i++) {
+            $response[$i]['type'] = 'deposit';
+        }
         return $this->parse_transactions($response, $currency, $since, $limit);
     }
 
@@ -579,13 +627,19 @@ class max extends Exchange {
         //        "$fee" => "0.747557",
         //        "fee_currency" => "usdt",
         //        "order_id" => 18298466
+        //        "info" => {
+        //            "maker" => "ask",
+        //            "ask" => array("$fee" => "0.747557", "fee_currency" => "usdt", "order_id" => 18298466),
+        //            "bid" => null
+        //        }
         //    }
         $timestamp = $this->safe_timestamp($trade, 'created_at');
         $price = $this->safe_float($trade, 'price');
         $amount = $this->safe_float($trade, 'volume');
-        $id = $this->safe_integer($trade, 'id');
+        $id = $this->safe_string($trade, 'id');
         $side = $this->safe_string($trade, 'side');
         $order = $this->safe_string($trade, 'order_id');
+        $cost = $this->safe_float($trade, 'funds');
         $fee = null;
         if (is_array($trade) && array_key_exists('fee', $trade)) {
             $fee = array (
@@ -593,7 +647,12 @@ class max extends Exchange {
                 'currency' => $this->safe_currency_code($trade['fee_currency']),
             );
         }
-        $takerOrMaker = null; // TODO $takerOrMaker
+        $tradeInfo = $this->safe_value($trade, 'info');
+        $tradeMakerSide = $this->safe_string_2($tradeInfo, 'maker');
+        $takerOrMaker = null;
+        if ($tradeMakerSide !== null && $side !== null) {
+            $takerOrMaker = $tradeMakerSide === $side ? 'maker' : 'taker';
+        }
         $symbol = null;
         if ($market === null) {
             $marketId = $this->safe_string($trade, 'market');
@@ -614,7 +673,7 @@ class max extends Exchange {
             'side' => $side,
             'price' => $price,
             'amount' => $amount,
-            'cost' => $price * $amount,
+            'cost' => $cost,
             'fee' => $fee,
         );
     }
@@ -625,9 +684,9 @@ class max extends Exchange {
         $request = array (
             'market' => $market['id'],
         );
-        // timestamp : the seconds elapsed $since Unix epoch, set to return trades executed before the time only
-        // if (timestamp !== null) {
-        //     $request['timestamp'] = timestamp;
+        // $since is not supported
+        // if ($since !== null) {
+        //     $request['timestamp'] = (int) floor(intval ($since, 10) / 1000);
         // }
         if ($limit !== null) {
             $request['limit'] = $limit; // default = 50, maximum = 1000
@@ -648,9 +707,10 @@ class max extends Exchange {
         if ($limit !== null) {
             $request['limit'] = $limit;
         }
-        // timestamp : the seconds elapsed $since Unix epoch, set to return trades executed before the time only
-        // if ($since !== null)
-        //     $request['timestamp'] = $since;
+        // $since is not supported
+        // if ($since !== null) {
+        //     $request['timestamp'] = (int) floor(intval ($since, 10) / 1000);
+        // }
         $response = $this->privateGetTradesMy (array_merge ($request, $params));
         return $this->parse_trades($response, $market, $since, $limit);
     }
@@ -671,8 +731,7 @@ class max extends Exchange {
         $status = $this->parse_order_status($this->safe_string($order, 'state'));
         $symbol = $this->find_symbol($this->safe_string($order, 'market'));
         $timestamp = $this->safe_timestamp($order, 'created_at');
-        $lastTradeTimestamp = $this->safe_timestamp($order, 'updated_at');
-        $id = $this->safe_integer($order, 'id');
+        $id = $this->safe_string($order, 'id');
         $price = $this->safe_float($order, 'price');
         $amount = $this->safe_float($order, 'volume');
         $average = $this->safe_float($order, 'avg_price');
@@ -696,7 +755,7 @@ class max extends Exchange {
             'id' => $id,
             'timestamp' => $timestamp,
             'datetime' => $this->iso8601 ($timestamp),
-            'lastTradeTimestamp' => $lastTradeTimestamp,
+            'lastTradeTimestamp' => null,
             'symbol' => $symbol,
             'type' => $type,
             'side' => $side,

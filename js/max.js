@@ -174,7 +174,7 @@ module.exports = class max extends Exchange {
     }
 
     async loadTimeDifference () {
-        const serverTimestamp = await this.fetchTime();
+        const serverTimestamp = await this.fetchTime ();
         const after = this.milliseconds ();
         this.options['timeDifference'] = after - serverTimestamp;
         return this.options['timeDifference'];
@@ -392,7 +392,7 @@ module.exports = class max extends Exchange {
             const key = tickerKeys[i];
             response[key]['symbol'] = key;
             const ticker = this.parseTicker (response[key]);
-            if (symbols === undefined || symbols.includes(ticker['symbol'])) {
+            if (symbols === undefined || symbols.includes (ticker['symbol'])) {
                 result[ticker['symbol']] = ticker;
             }
         }

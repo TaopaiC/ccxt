@@ -12,10 +12,12 @@ try:
 except NameError:
     basestring = str  # Python 2
 import base64
+import math
 from ccxt.base.errors import ExchangeError
 from ccxt.base.errors import AuthenticationError
 from ccxt.base.errors import ArgumentsRequired
 from ccxt.base.errors import InsufficientFunds
+from ccxt.base.errors import InvalidAddress
 from ccxt.base.errors import InvalidOrder
 from ccxt.base.errors import OrderNotFound
 
@@ -28,19 +30,20 @@ class max(Exchange):
             'name': 'Max',
             'countries': ['TW'],
             'version': 'v2',
+            'enableRateLimit': False,
             'rateLimit': 1200,
             'certified': False,
             'has': {
-                'CORS': True,
-                'publicAPI': True,
-                'privateAPI': True,
                 'cancelAllOrders': True,
                 'cancelOrder': True,
+                'cancelOrders': False,
+                'CORS': True,
                 'createDepositAddress': True,
                 'createLimitOrder': True,
                 'createMarketOrder': True,
                 'createOrder': True,
                 'deposit': False,
+                'editOrder': 'emulated',
                 'fetchBalance': True,
                 'fetchBidsAsks': False,
                 'fetchClosedOrders': True,
@@ -58,28 +61,19 @@ class max(Exchange):
                 'fetchOrderBook': True,
                 'fetchOrderBooks': False,
                 'fetchOrders': True,
+                'fetchStatus': 'emulated',
                 'fetchTicker': True,
                 'fetchTickers': True,
+                'fetchTime': True,
                 'fetchTrades': True,
                 'fetchTradingFee': False,
                 'fetchTradingFees': False,
                 'fetchTradingLimits': False,
                 'fetchTransactions': False,
                 'fetchWithdrawals': True,
+                'privateAPI': True,
+                'publicAPI': True,
                 'withdraw': False,
-            },
-            'timeframes': {
-                '1m': '1',
-                '5m': '5',
-                '15m': '15',
-                '30m': '30',
-                '1h': '60',
-                '2h': '120',
-                '6h': '360',
-                '12h': '720',
-                '1d': '1440',
-                '3d': '4320',
-                '1w': '10080',
             },
             'urls': {
                 'logo': '',
@@ -142,6 +136,20 @@ class max(Exchange):
                     ],
                 },
             },
+            'timeframes': {
+                '1m': '1',
+                '5m': '5',
+                '15m': '15',
+                '30m': '30',
+                '1h': '60',
+                '2h': '120',
+                '4h': '240',
+                '6h': '360',
+                '12h': '720',
+                '1d': '1440',
+                '3d': '4320',
+                '1w': '10080',
+            },
             'fees': {
                 'trading': {
                     'maker': 0.05 / 100,
@@ -155,7 +163,7 @@ class max(Exchange):
             'commonCurrencies': {
             },
             'options': {
-                'timeDifference': 0,  # the difference between system clock and Binance clock
+                'timeDifference': 0,  # the difference between system clock and Max clock
                 'adjustForTimeDifference': False,  # controls the adjustment logic upon instantiation
             },
             'exceptions': {
@@ -173,13 +181,17 @@ class max(Exchange):
             },
         })
 
+    def fetch_time(self, params={}):
+        response = self.publicGetTimestamp()
+        return int(response, 10) * 1000
+
     def nonce(self):
         return self.milliseconds() - self.options['timeDifference']
 
     def load_time_difference(self):
-        serverTimestamp = self.publicGetTimestamp()
+        serverTimestamp = self.fetch_time()
         after = self.milliseconds()
-        self.options['timeDifference'] = after - int(serverTimestamp, 10) * 1000
+        self.options['timeDifference'] = after - serverTimestamp
         return self.options['timeDifference']
 
     def insert_objects_property_by(self, a, keyA, b, keyB, insertKey):
@@ -330,9 +342,9 @@ class max(Exchange):
         orderbook = self.parse_order_book(response, timestamp)
         return orderbook
 
-    def parse_ticker(self, ticker, tickerSymbol, market=None):
+    def parse_ticker(self, ticker, market=None):
         timestamp = self.safe_timestamp(ticker, 'at')
-        symbol = self.find_symbol(tickerSymbol, market)
+        symbol = self.find_symbol(self.safe_string(ticker, 'symbol'), market)
         last = self.safe_float(ticker, 'last')
         open = self.safe_float(ticker, 'open')
         change = last - open
@@ -353,7 +365,7 @@ class max(Exchange):
             'previousClose': None,
             'change': change,
             'percentage': (change / open) * 100,
-            'average': (last + open) / 2,
+            'average': None,
             'baseVolume': self.safe_float(ticker, 'vol'),
             'quoteVolume': None,
             'info': ticker,
@@ -365,25 +377,25 @@ class max(Exchange):
         response = self.publicGetTickersMarketId(self.extend({
             'market_id': market['id'],
         }, params))
-        return self.parse_ticker(response, market['id'], market)
-
-    def parse_tickers(self, rawTickers, symbols=None):
-        tickers = []
-        tickerKeys = list(rawTickers.keys())
-        for i in range(0, len(tickerKeys)):
-            key = tickerKeys[i]
-            rawTicker = rawTickers[key]
-            tickers.append(self.parse_ticker(rawTicker, key))
-        return self.filter_by_array(tickers, 'symbol', symbols)
+        response['symbol'] = market['id']
+        return self.parse_ticker(response, market)
 
     def fetch_tickers(self, symbols=None, params={}):
         self.load_markets()
-        rawTickers = self.publicGetTickers(params)
-        return self.parse_tickers(rawTickers, symbols)
+        response = self.publicGetTickers(params)
+        tickerKeys = list(response.keys())
+        result = {}
+        for i in range(0, len(tickerKeys)):
+            key = tickerKeys[i]
+            response[key]['symbol'] = key
+            ticker = self.parse_ticker(response[key])
+            if symbols is None or symbols.includes(ticker['symbol']):
+                result[ticker['symbol']] = ticker
+        return result
 
     def parse_ohlcv(self, ohlcv, market=None, timeframe='1m', since=None, limit=None):
         return [
-            ohlcv[0],
+            int(ohlcv[0]) * 1000,
             float(ohlcv[1]),
             float(ohlcv[2]),
             float(ohlcv[3]),
@@ -399,20 +411,19 @@ class max(Exchange):
             'period': self.timeframes[timeframe],
         }
         if since is not None:
-            request['timestamp'] = since
+            request['timestamp'] = int(since) / 1000
         if limit is not None:
             request['limit'] = limit  # default = 30
         response = self.publicGetK(self.extend(request, params))
         return self.parse_ohlcvs(response, market, timeframe, since, limit)
 
     def parse_deposit_address(self, code, response):
-        depositAddress = None
-        if len(response) <= 1:
-            depositAddress = response[0]
-        else:
-            # TODO for multiple deposit address
-            depositAddress = response[0]
+        if len(response) < 1:
+            raise InvalidAddress(self.id + ' fetchDepositAddress ' + code + ' returned empty address.')
+        depositAddress = response[0]
         address = self.safe_string(depositAddress, 'address')
+        if address == 'suspended':
+            raise InvalidAddress(self.id + ' fetchDepositAddress ' + code + ' returned an suspended address.')
         tag = None
         if code == 'XRP' and address:
             splitted = address.split('?dt=')
@@ -449,10 +460,34 @@ class max(Exchange):
             return status
         statuses = {
             'deposit': {
+                'submitting': 'pending',
+                'cancelled': 'canceled',
+                'submitted': 'pending',
+                'suspended': 'pending',
+                'rejected': 'failed',
+                'accepted': 'ok',
+                'refunded': 'failed',
+                'suspect': 'pending',
+                'refund_cancelled': 'ok',
             },
             'withdrawal': {
+                'submitting': 'pending',
+                'submitted': 'pending',
+                'rejected': 'failed',
+                'accepted': 'pending',
+                'suspect': 'pending',
+                'approved': 'pending',
+                'processing': 'pending',
+                'retryable': 'pending',
                 'sent': 'pending',
+                'canceled': 'canceled',
+                'failed': 'failed',
+                'pending': 'pending',
                 'confirmed': 'ok',
+                'kgi_manually_processing': 'pending',
+                'kgi_instruction_sent': 'pending',
+                'kgi_manually_confirmed': 'ok',
+                'kgi_possible_failed': 'pending',
             },
         }
         return statuses[type][status] if (status in statuses[type]) else status
@@ -466,7 +501,7 @@ class max(Exchange):
         timestamp = self.safe_timestamp(transaction, 'created_at')
         updated = self.safe_timestamp(transaction, 'updated_at')
         amount = self.safe_float(transaction, 'amount')
-        feeCurrencyId = self.safe_string(transaction, 'currency')
+        feeCurrencyId = self.safe_string(transaction, 'fee_currency')
         feeCurrency = None
         if feeCurrencyId in self.currencies_by_id:
             feeCurrency = self.currencies_by_id[feeCurrencyId]
@@ -478,8 +513,7 @@ class max(Exchange):
             'cost': self.safe_float(transaction, 'fee'),
             'currency': feeCurrencyId,
         }
-        # TODO type
-        type = 'withdrawal'
+        type = self.safe_string(transaction, 'type')
         status = self.parse_transaction_status_by_type(self.safe_string(transaction, 'state'), type)
         return {
             'info': transaction,
@@ -504,11 +538,13 @@ class max(Exchange):
         if code is not None:
             currency = self.currency(code)
             request['currency'] = currency['id']
-        # timestamp : the seconds elapsed since Unix epoch, set to return trades executed before the time only
-        # if timestamp is not None:
-        #     request['timestamp'] = timestamp
-        # }
+        if since is not None:
+            request['from'] = int(math.floor(int(since, 10)) / 1000)
+        if limit is not None:
+            request['limit'] = limit
         response = self.privateGetWithdrawals(self.extend(request, params))
+        for i in range(0, len(response)):
+            response[i]['type'] = 'withdrawal'
         return self.parse_transactions(response, currency, since, limit)
 
     def fetch_deposits(self, code=None, since=None, limit=None, params={}):
@@ -518,7 +554,13 @@ class max(Exchange):
         if code is not None:
             currency = self.currency(code)
             request['currency'] = currency['id']
-        response = self.privateGetWithdrawals(self.extend(request, params))
+        if since is not None:
+            request['from'] = int(math.floor(int(since, 10)) / 1000)
+        if limit is not None:
+            request['limit'] = limit
+        response = self.privateGetDeposits(self.extend(request, params))
+        for i in range(0, len(response)):
+            response[i]['type'] = 'deposit'
         return self.parse_transactions(response, currency, since, limit)
 
     def parse_trade(self, trade, market=None):
@@ -551,20 +593,30 @@ class max(Exchange):
         #        "fee": "0.747557",
         #        "fee_currency": "usdt",
         #        "order_id": 18298466
+        #        "info": {
+        #            "maker": "ask",
+        #            "ask": {"fee": "0.747557", "fee_currency": "usdt", "order_id": 18298466},
+        #            "bid": null
+        #        }
         #    }
         timestamp = self.safe_timestamp(trade, 'created_at')
         price = self.safe_float(trade, 'price')
         amount = self.safe_float(trade, 'volume')
-        id = self.safe_integer(trade, 'id')
+        id = self.safe_string(trade, 'id')
         side = self.safe_string(trade, 'side')
         order = self.safe_string(trade, 'order_id')
+        cost = self.safe_float(trade, 'funds')
         fee = None
         if 'fee' in trade:
             fee = {
                 'cost': self.safe_float(trade, 'fee'),
                 'currency': self.safe_currency_code(trade['fee_currency']),
             }
-        takerOrMaker = None  # TODO takerOrMaker
+        tradeInfo = self.safe_value(trade, 'info')
+        tradeMakerSide = self.safe_string_2(tradeInfo, 'maker')
+        takerOrMaker = None
+        if tradeMakerSide is not None and side is not None:
+            takerOrMaker = tradeMakerSide == 'maker' if side else 'taker'
         symbol = None
         if market is None:
             marketId = self.safe_string(trade, 'market')
@@ -583,7 +635,7 @@ class max(Exchange):
             'side': side,
             'price': price,
             'amount': amount,
-            'cost': price * amount,
+            'cost': cost,
             'fee': fee,
         }
 
@@ -593,9 +645,9 @@ class max(Exchange):
         request = {
             'market': market['id'],
         }
-        # timestamp : the seconds elapsed since Unix epoch, set to return trades executed before the time only
-        # if timestamp is not None:
-        #     request['timestamp'] = timestamp
+        # since is not supported
+        # if since is not None:
+        #     request['timestamp'] = int(math.floor(int(since, 10)) / 1000)
         # }
         if limit is not None:
             request['limit'] = limit  # default = 50, maximum = 1000
@@ -612,9 +664,10 @@ class max(Exchange):
         }
         if limit is not None:
             request['limit'] = limit
-        # timestamp : the seconds elapsed since Unix epoch, set to return trades executed before the time only
+        # since is not supported
         # if since is not None:
-        #     request['timestamp'] = since
+        #     request['timestamp'] = int(math.floor(int(since, 10)) / 1000)
+        # }
         response = self.privateGetTradesMy(self.extend(request, params))
         return self.parse_trades(response, market, since, limit)
 
@@ -633,8 +686,7 @@ class max(Exchange):
         status = self.parse_order_status(self.safe_string(order, 'state'))
         symbol = self.find_symbol(self.safe_string(order, 'market'))
         timestamp = self.safe_timestamp(order, 'created_at')
-        lastTradeTimestamp = self.safe_timestamp(order, 'updated_at')
-        id = self.safe_integer(order, 'id')
+        id = self.safe_string(order, 'id')
         price = self.safe_float(order, 'price')
         amount = self.safe_float(order, 'volume')
         average = self.safe_float(order, 'avg_price')
@@ -654,7 +706,7 @@ class max(Exchange):
             'id': id,
             'timestamp': timestamp,
             'datetime': self.iso8601(timestamp),
-            'lastTradeTimestamp': lastTradeTimestamp,
+            'lastTradeTimestamp': None,
             'symbol': symbol,
             'type': type,
             'side': side,
