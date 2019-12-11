@@ -3,7 +3,7 @@
 //  ---------------------------------------------------------------------------
 
 const Exchange = require ('./base/Exchange');
-const { ExchangeError, ArgumentsRequired, InsufficientFunds, OrderNotFound, InvalidOrder, AuthenticationError } = require ('./base/errors');
+const { ExchangeError, ArgumentsRequired, InsufficientFunds, OrderNotFound, InvalidOrder, AuthenticationError, InvalidAddress } = require ('./base/errors');
 
 module.exports = class max extends Exchange {
     describe () {
@@ -12,19 +12,20 @@ module.exports = class max extends Exchange {
             'name': 'Max',
             'countries': [ 'TW' ],
             'version': 'v2',
+            'enableRateLimit': false,
             'rateLimit': 1200,
             'certified': false,
             'has': {
-                'CORS': true,
-                'publicAPI': true,
-                'privateAPI': true,
                 'cancelAllOrders': true,
                 'cancelOrder': true,
+                'cancelOrders': false,
+                'CORS': true,
                 'createDepositAddress': true,
                 'createLimitOrder': true,
                 'createMarketOrder': true,
                 'createOrder': true,
                 'deposit': false,
+                'editOrder': 'emulated',
                 'fetchBalance': true,
                 'fetchBidsAsks': false,
                 'fetchClosedOrders': true,
@@ -42,28 +43,19 @@ module.exports = class max extends Exchange {
                 'fetchOrderBook': true,
                 'fetchOrderBooks': false,
                 'fetchOrders': true,
+                'fetchStatus': 'emulated',
                 'fetchTicker': true,
                 'fetchTickers': true,
+                'fetchTime': true,
                 'fetchTrades': true,
                 'fetchTradingFee': false,
                 'fetchTradingFees': false,
                 'fetchTradingLimits': false,
                 'fetchTransactions': false,
                 'fetchWithdrawals': true,
+                'privateAPI': true,
+                'publicAPI': true,
                 'withdraw': false,
-            },
-            'timeframes': {
-                '1m': '1',
-                '5m': '5',
-                '15m': '15',
-                '30m': '30',
-                '1h': '60',
-                '2h': '120',
-                '6h': '360',
-                '12h': '720',
-                '1d': '1440',
-                '3d': '4320',
-                '1w': '10080',
             },
             'urls': {
                 'logo': '',
@@ -126,6 +118,20 @@ module.exports = class max extends Exchange {
                     ],
                 },
             },
+            'timeframes': {
+                '1m': '1',
+                '5m': '5',
+                '15m': '15',
+                '30m': '30',
+                '1h': '60',
+                '2h': '120',
+                '4h': '240',
+                '6h': '360',
+                '12h': '720',
+                '1d': '1440',
+                '3d': '4320',
+                '1w': '10080',
+            },
             'fees': {
                 'trading': {
                     'maker': 0.05 / 100,
@@ -139,7 +145,7 @@ module.exports = class max extends Exchange {
             'commonCurrencies': {
             },
             'options': {
-                'timeDifference': 0, // the difference between system clock and Binance clock
+                'timeDifference': 0, // the difference between system clock and Max clock
                 'adjustForTimeDifference': false, // controls the adjustment logic upon instantiation
             },
             'exceptions': {
@@ -158,14 +164,19 @@ module.exports = class max extends Exchange {
         });
     }
 
+    async fetchTime (params = {}) {
+        const response = await this.publicGetTimestamp ();
+        return parseInt (response, 10) * 1000;
+    }
+
     nonce () {
         return this.milliseconds () - this.options['timeDifference'];
     }
 
     async loadTimeDifference () {
-        const serverTimestamp = await this.publicGetTimestamp ();
+        const serverTimestamp = await this.fetchTime();
         const after = this.milliseconds ();
-        this.options['timeDifference'] = after - parseInt (serverTimestamp, 10) * 1000;
+        this.options['timeDifference'] = after - serverTimestamp;
         return this.options['timeDifference'];
     }
 
@@ -332,9 +343,9 @@ module.exports = class max extends Exchange {
         return orderbook;
     }
 
-    parseTicker (ticker, tickerSymbol, market = undefined) {
+    parseTicker (ticker, market = undefined) {
         const timestamp = this.safeTimestamp (ticker, 'at');
-        const symbol = this.findSymbol (tickerSymbol, market);
+        const symbol = this.findSymbol (this.safeString (ticker, 'symbol'), market);
         const last = this.safeFloat (ticker, 'last');
         const open = this.safeFloat (ticker, 'open');
         const change = last - open;
@@ -355,7 +366,7 @@ module.exports = class max extends Exchange {
             'previousClose': undefined,
             'change': change,
             'percentage': (change / open) * 100,
-            'average': (last + open) / 2,
+            'average': undefined,
             'baseVolume': this.safeFloat (ticker, 'vol'),
             'quoteVolume': undefined,
             'info': ticker,
@@ -368,29 +379,29 @@ module.exports = class max extends Exchange {
         const response = await this.publicGetTickersMarketId (this.extend ({
             'market_id': market['id'],
         }, params));
-        return this.parseTicker (response, market['id'], market);
-    }
-
-    parseTickers (rawTickers, symbols = undefined) {
-        const tickers = [];
-        const tickerKeys = Object.keys (rawTickers);
-        for (let i = 0; i < tickerKeys.length; i++) {
-            const key = tickerKeys[i];
-            const rawTicker = rawTickers[key];
-            tickers.push (this.parseTicker (rawTicker, key));
-        }
-        return this.filterByArray (tickers, 'symbol', symbols);
+        response['symbol'] = market['id'];
+        return this.parseTicker (response, market);
     }
 
     async fetchTickers (symbols = undefined, params = {}) {
         await this.loadMarkets ();
-        const rawTickers = await this.publicGetTickers (params);
-        return this.parseTickers (rawTickers, symbols);
+        const response = await this.publicGetTickers (params);
+        const tickerKeys = Object.keys (response);
+        const result = {};
+        for (let i = 0; i < tickerKeys.length; i++) {
+            const key = tickerKeys[i];
+            response[key]['symbol'] = key;
+            const ticker = this.parseTicker (response[key]);
+            if (symbols === undefined || symbols.includes(ticker['symbol'])) {
+                result[ticker['symbol']] = ticker;
+            }
+        }
+        return result;
     }
 
     parseOHLCV (ohlcv, market = undefined, timeframe = '1m', since = undefined, limit = undefined) {
         return [
-            ohlcv[0],
+            parseInt (ohlcv[0]) * 1000,
             parseFloat (ohlcv[1]),
             parseFloat (ohlcv[2]),
             parseFloat (ohlcv[3]),
@@ -407,7 +418,7 @@ module.exports = class max extends Exchange {
             'period': this.timeframes[timeframe],
         };
         if (since !== undefined) {
-            request['timestamp'] = since;
+            request['timestamp'] = parseInt (since) / 1000;
         }
         if (limit !== undefined) {
             request['limit'] = limit; // default = 30
@@ -417,14 +428,14 @@ module.exports = class max extends Exchange {
     }
 
     parseDepositAddress (code, response) {
-        let depositAddress = undefined;
-        if (response.length <= 1) {
-            depositAddress = response[0];
-        } else {
-            // TODO for multiple deposit address
-            depositAddress = response[0];
+        if (response.length < 1) {
+            throw new InvalidAddress (this.id + ' fetchDepositAddress ' + code + ' returned empty address.');
         }
+        const depositAddress = response[0];
         let address = this.safeString (depositAddress, 'address');
+        if (address === 'suspended') {
+            throw new InvalidAddress (this.id + ' fetchDepositAddress ' + code + ' returned an suspended address.');
+        }
         let tag = undefined;
         if (code === 'XRP' && address) {
             const splitted = address.split ('?dt=');
@@ -466,10 +477,34 @@ module.exports = class max extends Exchange {
         }
         const statuses = {
             'deposit': {
+                'submitting': 'pending',
+                'cancelled': 'canceled',
+                'submitted': 'pending',
+                'suspended': 'pending',
+                'rejected': 'failed',
+                'accepted': 'ok',
+                'refunded': 'failed',
+                'suspect': 'pending',
+                'refund_cancelled': 'ok',
             },
             'withdrawal': {
+                'submitting': 'pending',
+                'submitted': 'pending',
+                'rejected': 'failed',
+                'accepted': 'pending',
+                'suspect': 'pending',
+                'approved': 'pending',
+                'processing': 'pending',
+                'retryable': 'pending',
                 'sent': 'pending',
+                'canceled': 'canceled',
+                'failed': 'failed',
+                'pending': 'pending',
                 'confirmed': 'ok',
+                'kgi_manually_processing': 'pending',
+                'kgi_instruction_sent': 'pending',
+                'kgi_manually_confirmed': 'ok',
+                'kgi_possible_failed': 'pending',
             },
         };
         return (status in statuses[type]) ? statuses[type][status] : status;
@@ -484,7 +519,7 @@ module.exports = class max extends Exchange {
         const timestamp = this.safeTimestamp (transaction, 'created_at');
         const updated = this.safeTimestamp (transaction, 'updated_at');
         const amount = this.safeFloat (transaction, 'amount');
-        let feeCurrencyId = this.safeString (transaction, 'currency');
+        let feeCurrencyId = this.safeString (transaction, 'fee_currency');
         let feeCurrency = undefined;
         if (feeCurrencyId in this.currencies_by_id) {
             feeCurrency = this.currencies_by_id[feeCurrencyId];
@@ -498,8 +533,7 @@ module.exports = class max extends Exchange {
             'cost': this.safeFloat (transaction, 'fee'),
             'currency': feeCurrencyId,
         };
-        // TODO type
-        const type = 'withdrawal';
+        const type = this.safeString (transaction, 'type');
         const status = this.parseTransactionStatusByType (this.safeString (transaction, 'state'), type);
         return {
             'info': transaction,
@@ -526,11 +560,16 @@ module.exports = class max extends Exchange {
             currency = this.currency (code);
             request['currency'] = currency['id'];
         }
-        // timestamp : the seconds elapsed since Unix epoch, set to return trades executed before the time only
-        // if (timestamp !== undefined) {
-        //     request['timestamp'] = timestamp;
-        // }
+        if (since !== undefined) {
+            request['from'] = Math.floor (parseInt (since, 10) / 1000);
+        }
+        if (limit !== undefined) {
+            request['limit'] = limit;
+        }
         const response = await this.privateGetWithdrawals (this.extend (request, params));
+        for (let i = 0; i < response.length; i++) {
+            response[i]['type'] = 'withdrawal';
+        }
         return this.parseTransactions (response, currency, since, limit);
     }
 
@@ -542,7 +581,16 @@ module.exports = class max extends Exchange {
             currency = this.currency (code);
             request['currency'] = currency['id'];
         }
-        const response = await this.privateGetWithdrawals (this.extend (request, params));
+        if (since !== undefined) {
+            request['from'] = Math.floor (parseInt (since, 10) / 1000);
+        }
+        if (limit !== undefined) {
+            request['limit'] = limit;
+        }
+        const response = await this.privateGetDeposits (this.extend (request, params));
+        for (let i = 0; i < response.length; i++) {
+            response[i]['type'] = 'deposit';
+        }
         return this.parseTransactions (response, currency, since, limit);
     }
 
@@ -576,13 +624,19 @@ module.exports = class max extends Exchange {
         //        "fee": "0.747557",
         //        "fee_currency": "usdt",
         //        "order_id": 18298466
+        //        "info": {
+        //            "maker": "ask",
+        //            "ask": {"fee": "0.747557", "fee_currency": "usdt", "order_id": 18298466},
+        //            "bid": null
+        //        }
         //    }
         const timestamp = this.safeTimestamp (trade, 'created_at');
         const price = this.safeFloat (trade, 'price');
         const amount = this.safeFloat (trade, 'volume');
-        const id = this.safeInteger (trade, 'id');
+        const id = this.safeString (trade, 'id');
         const side = this.safeString (trade, 'side');
         const order = this.safeString (trade, 'order_id');
+        const cost = this.safeFloat (trade, 'funds');
         let fee = undefined;
         if ('fee' in trade) {
             fee = {
@@ -590,7 +644,12 @@ module.exports = class max extends Exchange {
                 'currency': this.safeCurrencyCode (trade['fee_currency']),
             };
         }
-        const takerOrMaker = undefined; // TODO takerOrMaker
+        const tradeInfo = this.safeValue (trade, 'info');
+        const tradeMakerSide = this.safeString2 (tradeInfo, 'maker');
+        let takerOrMaker = undefined;
+        if (tradeMakerSide !== undefined && side !== undefined) {
+            takerOrMaker = tradeMakerSide === side ? 'maker' : 'taker';
+        }
         let symbol = undefined;
         if (market === undefined) {
             const marketId = this.safeString (trade, 'market');
@@ -611,7 +670,7 @@ module.exports = class max extends Exchange {
             'side': side,
             'price': price,
             'amount': amount,
-            'cost': price * amount,
+            'cost': cost,
             'fee': fee,
         };
     }
@@ -622,9 +681,9 @@ module.exports = class max extends Exchange {
         const request = {
             'market': market['id'],
         };
-        // timestamp : the seconds elapsed since Unix epoch, set to return trades executed before the time only
-        // if (timestamp !== undefined) {
-        //     request['timestamp'] = timestamp;
+        // since is not supported
+        // if (since !== undefined) {
+        //     request['timestamp'] = Math.floor (parseInt (since, 10) / 1000);
         // }
         if (limit !== undefined) {
             request['limit'] = limit; // default = 50, maximum = 1000
@@ -645,9 +704,10 @@ module.exports = class max extends Exchange {
         if (limit !== undefined) {
             request['limit'] = limit;
         }
-        // timestamp : the seconds elapsed since Unix epoch, set to return trades executed before the time only
-        // if (since !== undefined)
-        //     request['timestamp'] = since;
+        // since is not supported
+        // if (since !== undefined) {
+        //     request['timestamp'] = Math.floor (parseInt (since, 10) / 1000);
+        // }
         const response = await this.privateGetTradesMy (this.extend (request, params));
         return this.parseTrades (response, market, since, limit);
     }
@@ -668,8 +728,7 @@ module.exports = class max extends Exchange {
         const status = this.parseOrderStatus (this.safeString (order, 'state'));
         const symbol = this.findSymbol (this.safeString (order, 'market'));
         const timestamp = this.safeTimestamp (order, 'created_at');
-        const lastTradeTimestamp = this.safeTimestamp (order, 'updated_at');
-        const id = this.safeInteger (order, 'id');
+        const id = this.safeString (order, 'id');
         let price = this.safeFloat (order, 'price');
         const amount = this.safeFloat (order, 'volume');
         const average = this.safeFloat (order, 'avg_price');
@@ -693,7 +752,7 @@ module.exports = class max extends Exchange {
             'id': id,
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
-            'lastTradeTimestamp': lastTradeTimestamp,
+            'lastTradeTimestamp': undefined,
             'symbol': symbol,
             'type': type,
             'side': side,
