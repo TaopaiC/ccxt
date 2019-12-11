@@ -616,7 +616,7 @@ class max(Exchange):
         tradeMakerSide = self.safe_string_2(tradeInfo, 'maker')
         takerOrMaker = None
         if tradeMakerSide is not None and side is not None:
-            takerOrMaker = tradeMakerSide == 'maker' if side else 'taker'
+            takerOrMaker = 'maker' if (tradeMakerSide == side) else 'taker'
         symbol = None
         if market is None:
             marketId = self.safe_string(trade, 'market')

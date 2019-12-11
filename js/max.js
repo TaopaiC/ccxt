@@ -648,7 +648,7 @@ module.exports = class max extends Exchange {
         const tradeMakerSide = this.safeString2 (tradeInfo, 'maker');
         let takerOrMaker = undefined;
         if (tradeMakerSide !== undefined && side !== undefined) {
-            takerOrMaker = tradeMakerSide === side ? 'maker' : 'taker';
+            takerOrMaker = (tradeMakerSide === side) ? 'maker' : 'taker';
         }
         let symbol = undefined;
         if (market === undefined) {

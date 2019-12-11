@@ -651,7 +651,7 @@ class max extends Exchange {
         $tradeMakerSide = $this->safe_string_2($tradeInfo, 'maker');
         $takerOrMaker = null;
         if ($tradeMakerSide !== null && $side !== null) {
-            $takerOrMaker = $tradeMakerSide === $side ? 'maker' : 'taker';
+            $takerOrMaker = ($tradeMakerSide === $side) ? 'maker' : 'taker';
         }
         $symbol = null;
         if ($market === null) {
