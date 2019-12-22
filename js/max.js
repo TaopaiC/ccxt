@@ -347,7 +347,14 @@ module.exports = class max extends Exchange {
 
     parseTicker (ticker, market = undefined) {
         const timestamp = this.safeTimestamp (ticker, 'at');
-        const symbol = this.findSymbol (this.safeString (ticker, 'symbol'), market);
+        let symbol = undefined;
+        const marketId = this.safeString (ticker, 'symbol');
+        if (marketId in this.markets_by_id) {
+            market = this.markets_by_id[marketId];
+        }
+        if (market !== undefined) {
+            symbol = market['symbol'];
+        }
         const last = this.safeFloat (ticker, 'last');
         const open = this.safeFloat (ticker, 'open');
         const change = last - open;
@@ -727,7 +734,14 @@ module.exports = class max extends Exchange {
 
     parseOrder (order, market = undefined) {
         const status = this.parseOrderStatus (this.safeString (order, 'state'));
-        const symbol = this.findSymbol (this.safeString (order, 'market'));
+        let symbol = undefined;
+        const marketId = this.safeString (order, 'market');
+        if (marketId in this.markets_by_id) {
+            market = this.markets_by_id[marketId];
+        }
+        if (market !== undefined) {
+            symbol = market['symbol'];
+        }
         const timestamp = this.safeTimestamp (order, 'created_at');
         const id = this.safeString (order, 'id');
         let price = this.safeFloat (order, 'price');
