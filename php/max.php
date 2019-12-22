@@ -152,7 +152,9 @@ class max extends Exchange {
                 'adjustForTimeDifference' => false, // controls the adjustment logic upon instantiation
             ),
             'exceptions' => array (
-                '2004' => '\\ccxt\\OrderNotFound',
+                '2002' => '\\ccxt\\InvalidOrder', // Order volume too small
+                '2003' => '\\ccxt\\OrderNotFound', // Failed to cancel order
+                '2004' => '\\ccxt\\OrderNotFound', // Order doesn't exist
                 '2005' => '\\ccxt\\AuthenticationError', // Signature is incorrect.
                 '2006' => '\\ccxt\\AuthenticationError', // The nonce has already been used by access key.
                 '2007' => '\\ccxt\\AuthenticationError', // The nonce is invalid. (30 secconds difference from server time)
@@ -516,7 +518,6 @@ class max extends Exchange {
     public function parse_transaction ($transaction, $currency = null) {
         $id = $this->safe_string($transaction, 'uuid');
         $txid = $this->safe_string($transaction, 'txid');
-        // var_dump ('currency', $currency);
         $currencyId = $this->safe_string($transaction, 'currency');
         $code = $this->safe_currency_code($currencyId, $currency);
         $timestamp = $this->safe_timestamp($transaction, 'created_at');
@@ -720,14 +721,14 @@ class max extends Exchange {
             'wait' => 'open',
             'cancel' => 'canceled',
             'done' => 'closed',
-            'convert' => 'open', // TODO
-            'finalizing' => 'open', // TODO
-            'failed' => 'canceled', // TODO
+            'convert' => 'open',
+            'finalizing' => 'open',
+            'failed' => 'canceled',
         );
         return (is_array($statuses) && array_key_exists($status, $statuses)) ? $statuses[$status] : $status;
     }
 
-    public function parse_order ($order) {
+    public function parse_order ($order, $market = null) {
         $status = $this->parse_order_status($this->safe_string($order, 'state'));
         $symbol = $this->find_symbol($this->safe_string($order, 'market'));
         $timestamp = $this->safe_timestamp($order, 'created_at');
@@ -766,8 +767,8 @@ class max extends Exchange {
             'filled' => $filled,
             'remaining' => $remaining,
             'status' => $status,
-            'fee' => null, // TODO fee of $order
-            'trades' => null, // TODO trades of $order
+            'fee' => null,
+            'trades' => null,
         );
         return $result;
     }
@@ -775,33 +776,34 @@ class max extends Exchange {
     public function create_order ($symbol, $type, $side, $amount, $price = null, $params = array ()) {
         $this->load_markets();
         $market = $this->market ($symbol);
+        $lowercaseType = strtolower($type);
         $order = array (
             'market' => $market['id'],
             'volume' => $this->amount_to_precision($symbol, $amount),
-            'ord_type' => $type,
+            'ord_type' => $lowercaseType,
             'side' => $side,
         );
         $priceIsRequired = false;
         $stopPriceIsRequired = false;
-        if ($type === 'limit' || $type === 'stop_limit') {
+        if ($lowercaseType === 'limit' || $lowercaseType === 'stop_limit') {
             $priceIsRequired = true;
         }
-        if ($type === 'stop_limit' || $type === 'stop_market') {
+        if ($lowercaseType === 'stop_limit' || $lowercaseType === 'stop_market') {
             $stopPriceIsRequired = true;
         }
         if ($priceIsRequired) {
             if ($price === null) {
-                throw new InvalidOrder($this->id . ' createOrder method requires a $price argument for a ' . $type . ' order');
+                throw new InvalidOrder($this->id . ' createOrder method requires a $price argument for a ' . $lowercaseType . ' order');
             }
             $order['price'] = $this->price_to_precision($symbol, $price);
         }
         if ($stopPriceIsRequired) {
-            $stopPrice = $this->safe_float($params, 'stopPrice');
-            if ($stopPrice === null) {
-                throw new InvalidOrder($this->id . ' createOrder method requires a $stopPrice extra param for a ' . $type . ' order');
+            $stop_price = $this->safe_float($params, 'stop_price');
+            if ($stop_price === null) {
+                throw new InvalidOrder($this->id . ' createOrder method requires a $stop_price extra param for a ' . $lowercaseType . ' order');
             }
-            $params = $this->omit ($params, 'stopPrice');
-            $order['stopPrice'] = $this->price_to_precision($symbol, $stopPrice);
+            $params = $this->omit ($params, 'stop_price');
+            $order['stop_price'] = $this->price_to_precision($symbol, $stop_price);
         }
         $response = $this->privatePostOrders (array_merge ($order, $params));
         return $this->parse_order($response, $market);
@@ -849,16 +851,20 @@ class max extends Exchange {
         if ($limit !== null) {
             $request['limit'] = $limit;
         }
+        // $since is not supported
+        // if ($since !== null) {
+        //     $request['timestamp'] = (int) floor(intval ($since, 10) / 1000);
+        // }
         $response = $this->privateGetOrders (array_merge ($request, $params));
-        return $this->parse_orders($response, $market, null, $limit);
+        return $this->parse_orders($response, $market, $since, $limit);
     }
 
     public function fetch_closed_orders ($symbol = null, $since = null, $limit = null, $params = array ()) {
-        return $this->fetch_orders($symbol, $since, $limit, array_merge ($params, array( 'state' => 'done' )));
+        return $this->fetch_orders($symbol, $since, $limit, array_merge ($params, array( 'state' => ['cancel', 'done', 'failed'] )));
     }
 
     public function fetch_open_orders ($symbol = null, $since = null, $limit = null, $params = array ()) {
-        return $this->fetch_orders($symbol, $since, $limit, array_merge ($params, array( 'state' => 'wait' )));
+        return $this->fetch_orders($symbol, $since, $limit, array_merge ($params, array( 'state' => ['wait', 'convert', 'finalizing'] )));
     }
 
     public function sign ($path, $api = 'public', $method = 'GET', $params = array (), $headers = null, $body = null) {
@@ -866,6 +872,10 @@ class max extends Exchange {
         $request = '/api/' . $this->version . '/' . $this->implode_params($path, $params);
         $url = $this->urls['api'][$api];
         $url .= $request;
+        if (!$headers) {
+            $headers = array();
+        }
+        $headers['X-MAX-AGENT'] = 'ccxt';
         if ($api === 'private') {
             $this->check_required_credentials();
             $newParams = array_merge ($params, array (
@@ -874,9 +884,6 @@ class max extends Exchange {
             ));
             $payload = base64_encode ($this->json ($newParams));
             $signature = $this->hmac ($payload, $this->secret);
-            if (!$headers) {
-                $headers = array();
-            }
             $headers = array_merge ($headers, array (
                 'X-MAX-ACCESSKEY' => $this->apiKey,
                 'X-MAX-PAYLOAD' => $payload,
@@ -884,14 +891,39 @@ class max extends Exchange {
             ));
         }
         if ($method === 'GET' || $method === 'DELETE') {
-            if ($newParams) {
-                $url .= '?' . $this->urlencode ($newParams);
+            if (!$this->is_empty($newParams)) {
+                $newParamsIsArray = array();
+                $newParamsOthers = array();
+                $newParamsKeys = is_array($newParams) ? array_keys($newParams) : array();
+                for ($i = 0; $i < count ($newParamsKeys); $i++) {
+                    $key = $newParamsKeys[$i];
+                    if (gettype ($newParams[$key]) === 'array' && count (array_filter (array_keys ($newParams[$key]), 'is_string')) == 0) {
+                        $newParamsIsArray[$key] = $newParams[$key];
+                    } else {
+                        $newParamsOthers[$key] = $newParams[$key];
+                    }
+                }
+                $url .= '?';
+                if (!$this->is_empty($newParamsOthers)) {
+                    $url .= $this->urlencode ($newParamsOthers);
+                }
+                if (!$this->is_empty($newParamsOthers) && !$this->is_empty($newParamsIsArray)) {
+                    $url .= '&';
+                }
+                if (!$this->is_empty($newParamsIsArray)) {
+                    $result = array();
+                    $newParamsIsArrayKeys = is_array($newParamsIsArray) ? array_keys($newParamsIsArray) : array();
+                    for ($i = 0; $i < count ($newParamsIsArrayKeys); $i++) {
+                        $key = $newParamsIsArrayKeys[$i];
+                        for ($j = 0; $j < count ($newParamsIsArray[$key]); $j++) {
+                            $result[] = $key . '%5B%5D=' . $newParamsIsArray[$key][$j];
+                        }
+                    }
+                    $url .= implode('&', $result);
+                }
             }
         } else {
             $body = $this->json ($newParams);
-            if (!$headers) {
-                $headers = array();
-            }
             $headers = array_merge ($headers, array (
                 'Content-Type' => 'application/json',
             ));
@@ -908,7 +940,7 @@ class max extends Exchange {
         if ($response === null) {
             return; // fallback to default $error handler
         }
-        $error = $this->safe_string($response, 'error');
+        $error = $this->safe_value($response, 'error');
         if (gettype ($error) === 'string') {
             return;
         }

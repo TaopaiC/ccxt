@@ -167,7 +167,9 @@ class max(Exchange):
                 'adjustForTimeDifference': False,  # controls the adjustment logic upon instantiation
             },
             'exceptions': {
-                '2004': OrderNotFound,
+                '2002': InvalidOrder,  # Order volume too small
+                '2003': OrderNotFound,  # Failed to cancel order
+                '2004': OrderNotFound,  # Order doesn't exist
                 '2005': AuthenticationError,  # Signature is incorrect.
                 '2006': AuthenticationError,  # The nonce has already been used by access key.
                 '2007': AuthenticationError,  # The nonce is invalid.(30 secconds difference from server time)
@@ -495,7 +497,6 @@ class max(Exchange):
     def parse_transaction(self, transaction, currency=None):
         id = self.safe_string(transaction, 'uuid')
         txid = self.safe_string(transaction, 'txid')
-        # print('currency', currency)
         currencyId = self.safe_string(transaction, 'currency')
         code = self.safe_currency_code(currencyId, currency)
         timestamp = self.safe_timestamp(transaction, 'created_at')
@@ -676,13 +677,13 @@ class max(Exchange):
             'wait': 'open',
             'cancel': 'canceled',
             'done': 'closed',
-            'convert': 'open',  # TODO
-            'finalizing': 'open',  # TODO
-            'failed': 'canceled',  # TODO
+            'convert': 'open',
+            'finalizing': 'open',
+            'failed': 'canceled',
         }
         return statuses[status] if (status in statuses) else status
 
-    def parse_order(self, order):
+    def parse_order(self, order, market=None):
         status = self.parse_order_status(self.safe_string(order, 'state'))
         symbol = self.find_symbol(self.safe_string(order, 'market'))
         timestamp = self.safe_timestamp(order, 'created_at')
@@ -717,36 +718,37 @@ class max(Exchange):
             'filled': filled,
             'remaining': remaining,
             'status': status,
-            'fee': None,  # TODO fee of order
-            'trades': None,  # TODO trades of order
+            'fee': None,
+            'trades': None,
         }
         return result
 
     def create_order(self, symbol, type, side, amount, price=None, params={}):
         self.load_markets()
         market = self.market(symbol)
+        lowercaseType = type.lower()
         order = {
             'market': market['id'],
             'volume': self.amount_to_precision(symbol, amount),
-            'ord_type': type,
+            'ord_type': lowercaseType,
             'side': side,
         }
         priceIsRequired = False
         stopPriceIsRequired = False
-        if type == 'limit' or type == 'stop_limit':
+        if lowercaseType == 'limit' or lowercaseType == 'stop_limit':
             priceIsRequired = True
-        if type == 'stop_limit' or type == 'stop_market':
+        if lowercaseType == 'stop_limit' or lowercaseType == 'stop_market':
             stopPriceIsRequired = True
         if priceIsRequired:
             if price is None:
-                raise InvalidOrder(self.id + ' createOrder method requires a price argument for a ' + type + ' order')
+                raise InvalidOrder(self.id + ' createOrder method requires a price argument for a ' + lowercaseType + ' order')
             order['price'] = self.price_to_precision(symbol, price)
         if stopPriceIsRequired:
-            stopPrice = self.safe_float(params, 'stopPrice')
-            if stopPrice is None:
-                raise InvalidOrder(self.id + ' createOrder method requires a stopPrice extra param for a ' + type + ' order')
-            params = self.omit(params, 'stopPrice')
-            order['stopPrice'] = self.price_to_precision(symbol, stopPrice)
+            stop_price = self.safe_float(params, 'stop_price')
+            if stop_price is None:
+                raise InvalidOrder(self.id + ' createOrder method requires a stop_price extra param for a ' + lowercaseType + ' order')
+            params = self.omit(params, 'stop_price')
+            order['stop_price'] = self.price_to_precision(symbol, stop_price)
         response = self.privatePostOrders(self.extend(order, params))
         return self.parse_order(response, market)
 
@@ -785,20 +787,27 @@ class max(Exchange):
         }
         if limit is not None:
             request['limit'] = limit
+        # since is not supported
+        # if since is not None:
+        #     request['timestamp'] = int(math.floor(int(since, 10)) / 1000)
+        # }
         response = self.privateGetOrders(self.extend(request, params))
-        return self.parse_orders(response, market, None, limit)
+        return self.parse_orders(response, market, since, limit)
 
     def fetch_closed_orders(self, symbol=None, since=None, limit=None, params={}):
-        return self.fetch_orders(symbol, since, limit, self.extend(params, {'state': 'done'}))
+        return self.fetch_orders(symbol, since, limit, self.extend(params, {'state': ['cancel', 'done', 'failed']}))
 
     def fetch_open_orders(self, symbol=None, since=None, limit=None, params={}):
-        return self.fetch_orders(symbol, since, limit, self.extend(params, {'state': 'wait'}))
+        return self.fetch_orders(symbol, since, limit, self.extend(params, {'state': ['wait', 'convert', 'finalizing']}))
 
     def sign(self, path, api='public', method='GET', params={}, headers=None, body=None):
         newParams = params
         request = '/api/' + self.version + '/' + self.implode_params(path, params)
         url = self.urls['api'][api]
         url += request
+        if not headers:
+            headers = {}
+        headers['X-MAX-AGENT'] = 'ccxt'
         if api == 'private':
             self.check_required_credentials()
             newParams = self.extend(params, {
@@ -807,20 +816,37 @@ class max(Exchange):
             })
             payload = base64.b64encode(self.json(newParams))
             signature = self.hmac(payload, self.secret)
-            if not headers:
-                headers = {}
             headers = self.extend(headers, {
                 'X-MAX-ACCESSKEY': self.apiKey,
                 'X-MAX-PAYLOAD': payload,
                 'X-MAX-SIGNATURE': signature,
             })
         if method == 'GET' or method == 'DELETE':
-            if newParams:
-                url += '?' + self.urlencode(newParams)
+            if not self.is_empty(newParams):
+                newParamsIsArray = {}
+                newParamsOthers = {}
+                newParamsKeys = list(newParams.keys())
+                for i in range(0, len(newParamsKeys)):
+                    key = newParamsKeys[i]
+                    if isinstance(newParams[key], list):
+                        newParamsIsArray[key] = newParams[key]
+                    else:
+                        newParamsOthers[key] = newParams[key]
+                url += '?'
+                if not self.is_empty(newParamsOthers):
+                    url += self.urlencode(newParamsOthers)
+                if not self.is_empty(newParamsOthers) and not self.is_empty(newParamsIsArray):
+                    url += '&'
+                if not self.is_empty(newParamsIsArray):
+                    result = []
+                    newParamsIsArrayKeys = list(newParamsIsArray.keys())
+                    for i in range(0, len(newParamsIsArrayKeys)):
+                        key = newParamsIsArrayKeys[i]
+                        for j in range(0, len(newParamsIsArray[key])):
+                            result.append(key + '%5B%5D=' + newParamsIsArray[key][j])
+                    url += '&'.join(result)
         else:
             body = self.json(newParams)
-            if not headers:
-                headers = {}
             headers = self.extend(headers, {
                 'Content-Type': 'application/json',
             })
@@ -834,7 +860,7 @@ class max(Exchange):
     def handle_errors(self, httpCode, reason, url, method, headers, body, response, requestHeaders, requestBody):
         if response is None:
             return  # fallback to default error handler
-        error = self.safe_string(response, 'error')
+        error = self.safe_value(response, 'error')
         if isinstance(error, basestring):
             return
         code = error and self.safe_string(error, 'code')
