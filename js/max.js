@@ -149,7 +149,9 @@ module.exports = class max extends Exchange {
                 'adjustForTimeDifference': false, // controls the adjustment logic upon instantiation
             },
             'exceptions': {
-                '2004': OrderNotFound,
+                '2002': InvalidOrder, // Order volume too small
+                '2003': OrderNotFound, // Failed to cancel order
+                '2004': OrderNotFound, // Order doesn't exist
                 '2005': AuthenticationError, // Signature is incorrect.
                 '2006': AuthenticationError, // The nonce has already been used by access key.
                 '2007': AuthenticationError, // The nonce is invalid. (30 secconds difference from server time)
@@ -513,7 +515,6 @@ module.exports = class max extends Exchange {
     parseTransaction (transaction, currency = undefined) {
         const id = this.safeString (transaction, 'uuid');
         const txid = this.safeString (transaction, 'txid');
-        // console.log ('currency', currency);
         const currencyId = this.safeString (transaction, 'currency');
         const code = this.safeCurrencyCode (currencyId, currency);
         const timestamp = this.safeTimestamp (transaction, 'created_at');
@@ -724,7 +725,7 @@ module.exports = class max extends Exchange {
         return (status in statuses) ? statuses[status] : status;
     }
 
-    parseOrder (order) {
+    parseOrder (order, market = undefined) {
         const status = this.parseOrderStatus (this.safeString (order, 'state'));
         const symbol = this.findSymbol (this.safeString (order, 'market'));
         const timestamp = this.safeTimestamp (order, 'created_at');
@@ -763,8 +764,8 @@ module.exports = class max extends Exchange {
             'filled': filled,
             'remaining': remaining,
             'status': status,
-            'fee': undefined, // TODO fee of order
-            'trades': undefined, // TODO trades of order
+            'fee': undefined,
+            'trades': undefined,
         };
         return result;
     }
@@ -772,33 +773,34 @@ module.exports = class max extends Exchange {
     async createOrder (symbol, type, side, amount, price = undefined, params = {}) {
         await this.loadMarkets ();
         const market = this.market (symbol);
+        const lowercaseType = type.toLowerCase ();
         const order = {
             'market': market['id'],
             'volume': this.amountToPrecision (symbol, amount),
-            'ord_type': type,
+            'ord_type': lowercaseType,
             'side': side,
         };
         let priceIsRequired = false;
         let stopPriceIsRequired = false;
-        if (type === 'limit' || type === 'stop_limit') {
+        if (lowercaseType === 'limit' || lowercaseType === 'stop_limit') {
             priceIsRequired = true;
         }
-        if (type === 'stop_limit' || type === 'stop_market') {
+        if (lowercaseType === 'stop_limit' || lowercaseType === 'stop_market') {
             stopPriceIsRequired = true;
         }
         if (priceIsRequired) {
             if (price === undefined) {
-                throw new InvalidOrder (this.id + ' createOrder method requires a price argument for a ' + type + ' order');
+                throw new InvalidOrder (this.id + ' createOrder method requires a price argument for a ' + lowercaseType + ' order');
             }
             order['price'] = this.priceToPrecision (symbol, price);
         }
         if (stopPriceIsRequired) {
-            const stopPrice = this.safeFloat (params, 'stopPrice');
-            if (stopPrice === undefined) {
-                throw new InvalidOrder (this.id + ' createOrder method requires a stopPrice extra param for a ' + type + ' order');
+            const stop_price = this.safeFloat (params, 'stop_price');
+            if (stop_price === undefined) {
+                throw new InvalidOrder (this.id + ' createOrder method requires a stop_price extra param for a ' + lowercaseType + ' order');
             }
-            params = this.omit (params, 'stopPrice');
-            order['stopPrice'] = this.priceToPrecision (symbol, stopPrice);
+            params = this.omit (params, 'stop_price');
+            order['stop_price'] = this.priceToPrecision (symbol, stop_price);
         }
         const response = await this.privatePostOrders (this.extend (order, params));
         return this.parseOrder (response, market);
@@ -846,8 +848,12 @@ module.exports = class max extends Exchange {
         if (limit !== undefined) {
             request['limit'] = limit;
         }
+        // since is not supported
+        // if (since !== undefined) {
+        //     request['timestamp'] = Math.floor (parseInt (since, 10) / 1000);
+        // }
         const response = await this.privateGetOrders (this.extend (request, params));
-        return this.parseOrders (response, market, undefined, limit);
+        return this.parseOrders (response, market, since, limit);
     }
 
     async fetchClosedOrders (symbol = undefined, since = undefined, limit = undefined, params = {}) {
@@ -855,7 +861,7 @@ module.exports = class max extends Exchange {
     }
 
     async fetchOpenOrders (symbol = undefined, since = undefined, limit = undefined, params = {}) {
-        return this.fetchOrders (symbol, since, limit, this.extend (params, { 'state': 'wait' }));
+        return this.fetchOrders (symbol, since, limit, this.extend (params, { 'state': ['done', 'cancel'] }));
     }
 
     sign (path, api = 'public', method = 'GET', params = {}, headers = undefined, body = undefined) {
@@ -881,8 +887,36 @@ module.exports = class max extends Exchange {
             });
         }
         if (method === 'GET' || method === 'DELETE') {
-            if (Object.keys (newParams).length) {
-                url += '?' + this.urlencode (newParams);
+            if (!this.isEmpty (newParams)) {
+                const newParamsIsArray = {};
+                const newParamsOthers = {};
+                const newParamsKeys = Object.keys (newParams);
+                for (let i = 0; i < newParamsKeys.length; i++) {
+                    const key = newParamsKeys[i];
+                    if (Array.isArray (newParams[key])) {
+                        newParamsIsArray[key] = newParams[key];
+                    } else {
+                        newParamsOthers[key] = newParams[key];
+                    }
+                }
+                url += '?';
+                if (!this.isEmpty (newParamsOthers)) {
+                    url += this.urlencode (newParamsOthers);
+                }
+                if (!this.isEmpty (newParamsOthers) && !this.isEmpty (newParamsIsArray)) {
+                    url += '&';
+                }
+                if (!this.isEmpty (newParamsIsArray)) {
+                    const result = [];
+                    const newParamsIsArrayKeys = Object.keys (newParamsIsArray);
+                    for (let i = 0; i < newParamsIsArrayKeys.length; i++) {
+                        const key = newParamsIsArrayKeys[i];
+                        for (let j = 0; j < newParamsIsArray[key].length; j++) {
+                            result.push (key + '%5B%5D=' + newParamsIsArray[key][j]);
+                        }
+                    }
+                    url += result.join ('&');
+                }
             }
         } else {
             body = this.json (newParams);
@@ -905,7 +939,7 @@ module.exports = class max extends Exchange {
         if (response === undefined) {
             return; // fallback to default error handler
         }
-        const error = this.safeString (response, 'error');
+        const error = this.safeValue (response, 'error');
         if (typeof error === 'string') {
             return;
         }
