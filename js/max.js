@@ -869,6 +869,10 @@ module.exports = class max extends Exchange {
         const request = '/api/' + this.version + '/' + this.implodeParams (path, params);
         let url = this.urls['api'][api];
         url += request;
+        if (!headers) {
+            headers = {};
+        }
+        headers['X-MAX-AGENT'] = 'ccxt';
         if (api === 'private') {
             this.checkRequiredCredentials ();
             newParams = this.extend (params, {
@@ -877,9 +881,6 @@ module.exports = class max extends Exchange {
             });
             const payload = this.stringToBase64 (this.json (newParams));
             const signature = this.hmac (payload, this.secret);
-            if (!headers) {
-                headers = {};
-            }
             headers = this.extend (headers, {
                 'X-MAX-ACCESSKEY': this.apiKey,
                 'X-MAX-PAYLOAD': payload,
@@ -920,9 +921,6 @@ module.exports = class max extends Exchange {
             }
         } else {
             body = this.json (newParams);
-            if (!headers) {
-                headers = {};
-            }
             headers = this.extend (headers, {
                 'Content-Type': 'application/json',
             });
