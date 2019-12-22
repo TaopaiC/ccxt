@@ -138,6 +138,7 @@ const exchanges = {
     'luno':                    require ('./js/luno.js'),
     'lykke':                   require ('./js/lykke.js'),
     'mandala':                 require ('./js/mandala.js'),
+    'max':                     require ('./js/max.js'),
     'mercado':                 require ('./js/mercado.js'),
     'mixcoins':                require ('./js/mixcoins.js'),
     'oceanex':                 require ('./js/oceanex.js'),
