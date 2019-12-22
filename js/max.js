@@ -718,9 +718,9 @@ module.exports = class max extends Exchange {
             'wait': 'open',
             'cancel': 'canceled',
             'done': 'closed',
-            'convert': 'open', // TODO
-            'finalizing': 'open', // TODO
-            'failed': 'canceled', // TODO
+            'convert': 'open',
+            'finalizing': 'open',
+            'failed': 'canceled',
         };
         return (status in statuses) ? statuses[status] : status;
     }
@@ -857,11 +857,11 @@ module.exports = class max extends Exchange {
     }
 
     async fetchClosedOrders (symbol = undefined, since = undefined, limit = undefined, params = {}) {
-        return this.fetchOrders (symbol, since, limit, this.extend (params, { 'state': 'done' }));
+        return this.fetchOrders (symbol, since, limit, this.extend (params, { 'state': ['cancel', 'done', 'failed'] }));
     }
 
     async fetchOpenOrders (symbol = undefined, since = undefined, limit = undefined, params = {}) {
-        return this.fetchOrders (symbol, since, limit, this.extend (params, { 'state': ['done', 'cancel'] }));
+        return this.fetchOrders (symbol, since, limit, this.extend (params, { 'state': ['wait', 'convert', 'finalizing'] }));
     }
 
     sign (path, api = 'public', method = 'GET', params = {}, headers = undefined, body = undefined) {
