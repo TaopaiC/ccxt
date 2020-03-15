@@ -824,11 +824,11 @@ class max(Exchange):
                 'nonce': self.nonce(),
                 'path': request,
             })
-            payload = base64.b64encode(self.json(newParams))
-            signature = self.hmac(payload, self.secret)
+            payload = base64.b64encode(self.encode(self.json(newParams)))
+            signature = self.hmac(payload, self.encode(self.secret))
             headers = self.extend(headers, {
                 'X-MAX-ACCESSKEY': self.apiKey,
-                'X-MAX-PAYLOAD': payload,
+                'X-MAX-PAYLOAD': self.decode(payload),
                 'X-MAX-SIGNATURE': signature,
             })
         if method == 'GET' or method == 'DELETE':

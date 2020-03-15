@@ -900,11 +900,11 @@ class max extends Exchange {
                 'nonce' => $this->nonce (),
                 'path' => $request,
             ));
-            $payload = base64_encode($this->json ($newParams));
-            $signature = $this->hmac ($payload, $this->secret);
+            $payload = base64_encode($this->encode ($this->json ($newParams)));
+            $signature = $this->hmac ($payload, $this->encode ($this->secret));
             $headers = array_merge($headers, array(
                 'X-MAX-ACCESSKEY' => $this->apiKey,
-                'X-MAX-PAYLOAD' => $payload,
+                'X-MAX-PAYLOAD' => $this->decode ($payload),
                 'X-MAX-SIGNATURE' => $signature,
             ));
         }

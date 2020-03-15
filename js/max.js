@@ -893,11 +893,11 @@ module.exports = class max extends Exchange {
                 'nonce': this.nonce (),
                 'path': request,
             });
-            const payload = this.stringToBase64 (this.json (newParams));
-            const signature = this.hmac (payload, this.secret);
+            const payload = this.stringToBase64 (this.encode (this.json (newParams)));
+            const signature = this.hmac (payload, this.encode (this.secret));
             headers = this.extend (headers, {
                 'X-MAX-ACCESSKEY': this.apiKey,
-                'X-MAX-PAYLOAD': payload,
+                'X-MAX-PAYLOAD': this.decode (payload),
                 'X-MAX-SIGNATURE': signature,
             });
         }
