@@ -4,6 +4,7 @@
 
 const Exchange = require ('./base/Exchange');
 const { ExchangeError, ArgumentsRequired, InsufficientFunds, OrderNotFound, InvalidOrder, AuthenticationError, InvalidAddress } = require ('./base/errors');
+const { ROUND } = require ('./base/functions/number');
 
 module.exports = class max extends Exchange {
     describe () {
@@ -70,12 +71,9 @@ module.exports = class max extends Exchange {
                 'fees': 'https://max.maicoin.com/docs/fees',
             },
             'api': {
-                'web': {
-                },
-                'wapi': {
-                },
                 'public': {
                     'get': [
+                        'summary',
                         'markets',
                         'currencies',
                         'tickers/{market_id}',
@@ -134,11 +132,24 @@ module.exports = class max extends Exchange {
             },
             'fees': {
                 'trading': {
+                    'tierBased': false,
+                    'percentage': true,
                     'maker': 0.05 / 100,
                     'taker': 0.15 / 100,
                 },
                 'funding': {
-                    'withdraw': {},
+                    'withdraw': {
+                        'BTC': 0.0005,
+                        'BCNT': 25.0,
+                        'BCH': 0.0001,
+                        'ETH': 0.001,
+                        'LTC': 0.001,
+                        'MAX': 5.0,
+                        'MITH': 2.0,
+                        'TWD': 15.0,
+                        'USDT': 3.0,
+                        'XRP': 0.25,
+                    },
                     'deposit': {},
                 },
             },
@@ -147,6 +158,18 @@ module.exports = class max extends Exchange {
             'options': {
                 'timeDifference': 0, // the difference between system clock and Max clock
                 'adjustForTimeDifference': false, // controls the adjustment logic upon instantiation
+                'minimumAmountOfCurrencies': {
+                    'BTC': 0.001,
+                    'BCNT': 300.0,
+                    'BCH': 0.03,
+                    'ETH': 0.05,
+                    'LTC': 0.14,
+                    'MAX': 100.0,
+                    'MITH': 582.0,
+                    'TWD': 250.0,
+                    'USDT': 8.0,
+                    'XRP': 33.0,
+                },
             },
             'exceptions': {
                 '2002': InvalidOrder, // Order volume too small
@@ -182,61 +205,35 @@ module.exports = class max extends Exchange {
         return this.options['timeDifference'];
     }
 
-    insertObjectsPropertyBy (a, keyA, b, keyB, insertKey) {
-        const result = {};
-        for (let i = 0; i < a.length; i++) {
-            const entry = a[i];
-            const index = entry[keyA];
-            result[index] = entry;
-        }
-        for (let i = 0; i < b.length; i++) {
-            const entry = b[i];
-            const index = entry[keyB];
-            if (result[index]) {
-                result[index][insertKey] = entry;
-            }
-        }
-        const values = [];
-        const resultKeys = Object.keys (result);
-        for (let i = 0; i < resultKeys.length; i++) {
-            values.push (result[resultKeys[i]]);
-        }
-        return values;
-    }
-
     async fetchCurrencies (params = {}) {
         const currenciesResponse = await this.publicGetCurrencies (params);
-        const withdrawalResponse = await this.publicGetWithdrawalConstraint ();
-        const response = this.insertObjectsPropertyBy (
-            currenciesResponse,
-            'id',
-            withdrawalResponse,
-            'currency',
-            'withdrawal'
-        );
+        const withdrawalConstraintResponse = await this.publicGetWithdrawalConstraint ();
+        const withdrawalConstraint = this.indexBy (withdrawalConstraintResponse, 'currency');
         const result = {};
-        for (let i = 0; i < response.length; i++) {
-            const currency = response[i];
-            const id = currency['id'];
+        for (let i = 0; i < currenciesResponse.length; i++) {
+            const currency = currenciesResponse[i];
+            const id = this.safeString (currency, 'id');
             const code = this.safeCurrencyCode (id);
             const fiat = id === 'twd' ? true : false;
-            const withdrawal = this.safeValue (currency, 'withdrawal');
+            const precision = this.safeInteger (currency, 'precision');
+            const withdrawal = this.safeValue (withdrawalConstraint, id);
             const withdrawalFee = this.safeValue (withdrawal, 'fee');
             const withdrawalLimit = this.safeValue (withdrawal, 'min_amount');
+            const minAmount = this.safeFloat (this.options['minimumAmountOfCurrencies'], code);
             result[code] = {
                 'id': id,
                 'code': code,
                 'name': code,
-                'active': true,
+                'active': true, // TODO
                 'fiat': fiat,
-                'precision': this.safeInteger (currency, 'precision'),
+                'precision': precision,
                 'limits': {
                     'amount': {
-                        'min': undefined,
+                        'min': minAmount,
                         'max': undefined,
                     },
                     'price': {
-                        'min': undefined,
+                        'min': Math.pow (10, -precision),
                         'max': undefined,
                     },
                     'deposit': {
@@ -293,15 +290,15 @@ module.exports = class max extends Exchange {
                 'precision': precision,
                 'limits': {
                     'amount': {
-                        'min': undefined,
+                        'min': this.safeFloat (this.options['minimumAmountOfCurrencies'], base),
                         'max': undefined,
                     },
                     'price': {
-                        'min': undefined,
+                        'min': Math.pow (10, -precision['price']),
                         'max': undefined,
                     },
                     'cost': {
-                        'min': undefined,
+                        'min': this.safeFloat (this.options['minimumAmountOfCurrencies'], quote),
                         'max': undefined,
                     },
                 },
@@ -309,6 +306,27 @@ module.exports = class max extends Exchange {
             result.push (entry);
         }
         return result;
+    }
+
+    calculateFee (symbol, type, side, amount, price, takerOrMaker = 'taker', params = {}) {
+        const market = this.markets[symbol];
+        let key = 'quote';
+        const rate = market[takerOrMaker];
+        let cost = amount * rate;
+        let precision = market['precision']['price'];
+        if (side === 'sell') {
+            cost *= price;
+        } else {
+            key = 'base';
+            precision = market['precision']['amount'];
+        }
+        cost = parseFloat (this.decimalToPrecision (cost, ROUND, precision, this.precisionMode));
+        return {
+            'type': takerOrMaker,
+            'currency': market[key],
+            'rate': rate,
+            'cost': cost,
+        };
     }
 
     async fetchBalance (params = {}) {
@@ -408,14 +426,14 @@ module.exports = class max extends Exchange {
         return result;
     }
 
-    parseOHLCV (ohlcv, market = undefined, timeframe = '1m', since = undefined, limit = undefined) {
+    parseOHLCV (ohlcv, market = undefined) {
         return [
-            parseInt (ohlcv[0]) * 1000,
-            parseFloat (ohlcv[1]),
-            parseFloat (ohlcv[2]),
-            parseFloat (ohlcv[3]),
-            parseFloat (ohlcv[4]),
-            parseFloat (ohlcv[5]),
+            this.safeTimestamp (ohlcv, 0),
+            this.safeFloat (ohlcv, 1),
+            this.safeFloat (ohlcv, 2),
+            this.safeFloat (ohlcv, 3),
+            this.safeFloat (ohlcv, 4),
+            this.safeFloat (ohlcv, 5),
         ];
     }
 
@@ -602,6 +620,22 @@ module.exports = class max extends Exchange {
         return this.parseTransactions (response, currency, since, limit);
     }
 
+    parseSide (side) {
+        if (!side) {
+            return undefined;
+        }
+        if (side === 'buy' || side === 'sell') {
+            return side;
+        }
+        if (side === 'bid') {
+            return 'buy';
+        }
+        if (side === 'ask') {
+            return 'sell';
+        }
+        return undefined;
+    }
+
     parseTrade (trade, market = undefined) {
         //
         // public trades
@@ -675,7 +709,7 @@ module.exports = class max extends Exchange {
             'order': order,
             'type': undefined,
             'takerOrMaker': takerOrMaker,
-            'side': side,
+            'side': this.parseSide (side),
             'price': price,
             'amount': amount,
             'cost': cost,
@@ -765,6 +799,7 @@ module.exports = class max extends Exchange {
         const result = {
             'info': order,
             'id': id,
+            'clientOrderId': undefined,
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
             'lastTradeTimestamp': undefined,
