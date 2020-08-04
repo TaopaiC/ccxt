@@ -158,6 +158,7 @@ class Exchange {
         'livecoin',
         'luno',
         'lykke',
+        'max',
         'mercado',
         'mixcoins',
         'oceanex',
