@@ -44,6 +44,7 @@ module.exports = class max extends Exchange {
                 'fetchOrderBook': true,
                 'fetchOrderBooks': false,
                 'fetchOrders': true,
+                'fetchOrderTrades': false,
                 'fetchStatus': 'emulated',
                 'fetchTicker': true,
                 'fetchTickers': true,
@@ -752,6 +753,15 @@ module.exports = class max extends Exchange {
         // }
         const response = await this.privateGetTradesMy (this.extend (request, params));
         return this.parseTrades (response, market, since, limit);
+    }
+
+    async fetchOrderTrades (id, symbol = undefined, since = undefined, limit = undefined, params = {}) {
+        const request = {
+            'id': id,
+            // 'client_oid': client_oid, // user specific order id in RFC 4122 format. only persist for 24 hours
+        };
+        const response = await this.privateGetTradesMyOfOrder (this.extend (request, params));
+        return this.parseTrades (response);
     }
 
     parseOrderStatus (status) {
