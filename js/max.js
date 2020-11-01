@@ -20,7 +20,7 @@ module.exports = class max extends Exchange {
                 'cancelAllOrders': true,
                 'cancelOrder': true,
                 'cancelOrders': false,
-                'CORS': true,
+                'CORS': false,
                 'createDepositAddress': true,
                 'createLimitOrder': true,
                 'createMarketOrder': true,
@@ -32,8 +32,8 @@ module.exports = class max extends Exchange {
                 'fetchClosedOrders': true,
                 'fetchCurrencies': true,
                 'fetchDepositAddress': true,
-                'fetchDeposits': false,
-                'fetchFundingFees': false,
+                'fetchDeposits': true,
+                'fetchFundingFees': true,
                 'fetchL2OrderBook': false,
                 'fetchLedger': false,
                 'fetchMarkets': true,
@@ -84,6 +84,8 @@ module.exports = class max extends Exchange {
                         'trades',
                         'k',
                         'timestamp',
+                        'vip_levels',
+                        'vip_levels/{level}',
                     ],
                 },
                 'private': {
@@ -91,6 +93,7 @@ module.exports = class max extends Exchange {
                         'members/profile',
                         'members/accounts/{currency_id}',
                         'members/accounts',
+                        'members/vip_level',
                         'members/me',
                         'deposits',
                         'deposit',
@@ -112,7 +115,7 @@ module.exports = class max extends Exchange {
                         'deposit_addresses',
                         'orders/clear',
                         'orders',
-                        'orders/multi',
+                        'orders/multi/onebyone',
                         'order/delete',
                     ],
                 },
@@ -133,24 +136,37 @@ module.exports = class max extends Exchange {
             },
             'fees': {
                 'trading': {
-                    'tierBased': false,
+                    'tierBased': true,
                     'percentage': true,
                     'maker': 0.05 / 100,
                     'taker': 0.15 / 100,
+                    'tiers': {
+                        'taker': [
+                            // volume in TWD
+                            [0, 0.15 / 100],
+                            [3000000, 0.135 / 100],
+                            [10000000, 0.12 / 100],
+                            [30000000, 0.105 / 100],
+                            [150000000, 0.09 / 100],
+                            [300000000, 0.075 / 100],
+                            [600000000, 0.06 / 100],
+                        ],
+                        'maker': [
+                            // volume in TWD
+                            [0, 0.05 / 100],
+                            [3000000, 0.045 / 100],
+                            [10000000, 0.04 / 100],
+                            [30000000, 0.035 / 100],
+                            [150000000, 0.03 / 100],
+                            [300000000, 0.025 / 100],
+                            [600000000, 0.02 / 100],
+                        ],
+                    },
                 },
                 'funding': {
-                    'withdraw': {
-                        'BTC': 0.0005,
-                        'BCNT': 25.0,
-                        'BCH': 0.0001,
-                        'ETH': 0.001,
-                        'LTC': 0.001,
-                        'MAX': 5.0,
-                        'MITH': 2.0,
-                        'TWD': 15.0,
-                        'USDT': 3.0,
-                        'XRP': 0.25,
-                    },
+                    'tierBased': false,
+                    'percentage': false,
+                    'withdraw': {},
                     'deposit': {},
                 },
             },
@@ -204,6 +220,31 @@ module.exports = class max extends Exchange {
         const after = this.milliseconds ();
         this.options['timeDifference'] = after - serverTimestamp;
         return this.options['timeDifference'];
+    }
+
+    async fetchFundingFees (params = {}) {
+        const response = await this.publicGetWithdrawalConstraint (params);
+        //
+        //     [
+        //       {
+        //          "currency": "eth",
+        //          "fee": "0.002",
+        //          "ratio": "0.0",
+        //          "min_amount": "0.02"
+        //        }
+        //     ]
+        //
+        const withdrawFees = {};
+        for (let i = 0; i < response.length; i++) {
+            const id = this.safeValue (response[i], 'currency');
+            const code = this.safeCurrencyCode (id);
+            withdrawFees[code] = this.safeFloat (response[i], 'fee');
+        }
+        return {
+            'withdraw': withdrawFees,
+            'deposit': {},
+            'info': response,
+        };
     }
 
     async fetchCurrencies (params = {}) {
