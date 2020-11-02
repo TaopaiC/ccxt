@@ -51,7 +51,7 @@ module.exports = class max extends Exchange {
                 'fetchTime': true,
                 'fetchTrades': true,
                 'fetchTradingFee': false,
-                'fetchTradingFees': false,
+                'fetchTradingFees': true,
                 'fetchTradingLimits': false,
                 'fetchTransactions': false,
                 'fetchWithdrawals': true,
@@ -793,6 +793,33 @@ module.exports = class max extends Exchange {
             'amount': amount,
             'cost': cost,
             'fee': fee,
+        };
+    }
+
+    async fetchTradingFees (params = {}) {
+        //    {
+        //      current_vip_level: {
+        //        level: 0,
+        //        minimum_trading_volume: 0,
+        //        minimum_staking_volume: 0,
+        //        maker_fee: 0.0005,
+        //        taker_fee: 0.0015
+        //      },
+        //      next_vip_level: {
+        //        level: 1,
+        //        minimum_trading_volume: 3000000,
+        //        minimum_staking_volume: 500,
+        //        maker_fee: 0.00045,
+        //        taker_fee: 0.00135
+        //      }
+        //    }
+        await this.loadMarkets ();
+        const response = await this.privateGetMembersVipLevel (params);
+        const level = this.safeValue (response, 'current_vip_level');
+        return {
+            'info': response,
+            'maker': this.safeFloat (level, 'maker_fee'),
+            'taker': this.safeFloat (level, 'taker_fee'),
         };
     }
 
