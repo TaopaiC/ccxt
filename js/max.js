@@ -4,7 +4,6 @@
 
 const Exchange = require ('./base/Exchange');
 const { ExchangeError, ArgumentsRequired, InsufficientFunds, OrderNotFound, InvalidOrder, AuthenticationError, InvalidAddress } = require ('./base/errors');
-const { ROUND } = require ('./base/functions/number');
 
 module.exports = class max extends Exchange {
     describe () {
@@ -310,8 +309,8 @@ module.exports = class max extends Exchange {
         for (let i = 0; i < markets.length; i++) {
             const market = markets[i];
             const id = this.safeString (market, 'id');
-            const baseId = this.safeString(market, 'base_unit');
-            const quoteId = this.safeString(market, 'quote_unit');
+            const baseId = this.safeString (market, 'base_unit');
+            const quoteId = this.safeString (market, 'quote_unit');
             const base = this.safeCurrencyCode (baseId);
             const quote = this.safeCurrencyCode (quoteId);
             const symbol = base + '/' + quote;
@@ -775,7 +774,7 @@ module.exports = class max extends Exchange {
             const tradeMakerSide = this.safeString2 (tradeInfo, 'maker');
             if (tradeMakerSide !== undefined && side !== undefined) {
                 takerOrMaker = (tradeMakerSide === side) ? 'maker' : 'taker';
-            }    
+            }
         }
         const marketId = this.safeString (trade, 'market');
         const symbol = this.safeSymbol (marketId, market);
@@ -1008,7 +1007,7 @@ module.exports = class max extends Exchange {
             params = this.omit (params, [ 'client_oid', 'clientOrderId' ]);
         } else {
             request['id'] = id;
-        };
+        }
         const response = await this.privatePostOrderDelete (this.extend (request, params));
         return this.parseOrder (response);
     }
@@ -1022,7 +1021,7 @@ module.exports = class max extends Exchange {
             params = this.omit (params, [ 'client_oid', 'clientOrderId' ]);
         } else {
             request['id'] = id;
-        };
+        }
         const response = await this.privateGetOrder (this.extend (request, params));
         return this.parseOrder (response);
     }
