@@ -855,17 +855,32 @@ module.exports = class max extends Exchange {
     }
 
     parseOrder (order, market = undefined) {
+        //   {
+        //     id: 12345678,
+        //     client_oid: null,
+        //     side: 'buy',
+        //     ord_type: 'limit',
+        //     price: '0.01',
+        //     stop_price: null,
+        //     avg_price: '0.0',
+        //     state: 'wait',
+        //     market: 'maxusdt',
+        //     created_at: 1604983942,
+        //     created_at_in_ms: 1604983942224,
+        //     updated_at: 1604983942,
+        //     updated_at_in_ms: 1604983942224,
+        //     volume: '2000.0',
+        //     remaining_volume: '2000.0',
+        //     executed_volume: '0.0',
+        //     trades_count: 0,
+        //     group_id: 1
+        //   }
         const status = this.parseOrderStatus (this.safeString (order, 'state'));
-        let symbol = undefined;
         const marketId = this.safeString (order, 'market');
-        if (marketId in this.markets_by_id) {
-            market = this.markets_by_id[marketId];
-        }
-        if (market !== undefined) {
-            symbol = market['symbol'];
-        }
+        const symbol = this.safeSymbol (marketId, market);
         const timestamp = this.safeTimestamp (order, 'created_at');
         const id = this.safeString (order, 'id');
+        const clientOrderId = this.safeString (order, 'client_oid');
         let price = this.safeFloat (order, 'price');
         const amount = this.safeFloat (order, 'volume');
         const average = this.safeFloat (order, 'avg_price');
@@ -887,7 +902,7 @@ module.exports = class max extends Exchange {
         const result = {
             'info': order,
             'id': id,
-            'clientOrderId': undefined,
+            'clientOrderId': clientOrderId,
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
             'lastTradeTimestamp': undefined,
@@ -917,9 +932,14 @@ module.exports = class max extends Exchange {
             'ord_type': lowercaseType,
             'side': side,
         };
+        const clientOrderId = this.safeString2 (params, 'client_oid', 'clientOrderId');
+        if (clientOrderId !== undefined) {
+            order['client_oid'] = clientOrderId;
+            params = this.omit (params, [ 'client_oid', 'clientOrderId' ]);
+        }
         let priceIsRequired = false;
         let stopPriceIsRequired = false;
-        if (lowercaseType === 'limit' || lowercaseType === 'stop_limit') {
+        if (lowercaseType === 'limit' || lowercaseType === 'stop_limit' || lowercaseType === 'post_only') {
             priceIsRequired = true;
         }
         if (lowercaseType === 'stop_limit' || lowercaseType === 'stop_market') {
@@ -947,29 +967,36 @@ module.exports = class max extends Exchange {
         const request = {};
         if (symbol !== undefined) {
             await this.loadMarkets ();
-            const market = this.market (symbol);
-            request['market'] = market['id'];
+            const marketId = this.marketId (symbol);
+            request['market'] = marketId;
         }
         return this.privatePostOrdersClear (this.extend (request, params));
     }
 
     async cancelOrder (id, symbol = undefined, params = {}) {
-        const request = {
-            'id': id,
+        const request = {};
+        const clientOrderId = this.safeString2 (params, 'client_oid', 'clientOrderId');
+        if (clientOrderId !== undefined) {
+            request['client_oid'] = clientOrderId;
+            params = this.omit (params, [ 'client_oid', 'clientOrderId' ]);
+        } else {
+            request['id'] = id;
         };
         const response = await this.privatePostOrderDelete (this.extend (request, params));
         return this.parseOrder (response);
     }
 
     async fetchOrder (id, symbol = undefined, params = {}) {
-        if (id === undefined) {
-            throw new ArgumentsRequired (this.id + ' fetchOrder requires a id argument');
-        }
         await this.loadMarkets ();
-        const request = {
-            'id': id,
+        const request = {};
+        const clientOrderId = this.safeString2 (params, 'client_oid', 'clientOrderId');
+        if (clientOrderId !== undefined) {
+            request['client_oid'] = clientOrderId;
+            params = this.omit (params, [ 'client_oid', 'clientOrderId' ]);
+        } else {
+            request['id'] = id;
         };
-        const response = await this.privateGetOrder (request);
+        const response = await this.privateGetOrder (this.extend (request, params));
         return this.parseOrder (response);
     }
 
