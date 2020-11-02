@@ -175,18 +175,6 @@ module.exports = class max extends Exchange {
             'options': {
                 'timeDifference': 0, // the difference between system clock and Max clock
                 'adjustForTimeDifference': false, // controls the adjustment logic upon instantiation
-                'minimumAmountOfCurrencies': {
-                    'BTC': 0.001,
-                    'BCNT': 300.0,
-                    'BCH': 0.03,
-                    'ETH': 0.05,
-                    'LTC': 0.14,
-                    'MAX': 100.0,
-                    'MITH': 582.0,
-                    'TWD': 250.0,
-                    'USDT': 8.0,
-                    'XRP': 33.0,
-                },
             },
             'exceptions': {
                 '2002': InvalidOrder, // Order volume too small
@@ -302,6 +290,18 @@ module.exports = class max extends Exchange {
     }
 
     async fetchMarkets (params = {}) {
+        //
+        //    {
+        //      id: 'btcusdt',
+        //      name: 'BTC/USDT',
+        //      base_unit: 'btc',
+        //      base_unit_precision: 6,
+        //      min_base_amount: 0.001,
+        //      quote_unit: 'usdt',
+        //      quote_unit_precision: 2,
+        //      min_quote_amount: 8.0
+        //    }
+        //
         const markets = await this.publicGetMarkets ();
         if (this.options['adjustForTimeDifference']) {
             await this.loadTimeDifference ();
@@ -309,17 +309,19 @@ module.exports = class max extends Exchange {
         const result = [];
         for (let i = 0; i < markets.length; i++) {
             const market = markets[i];
-            const id = market['id'];
-            const baseId = market['base_unit'];
-            const quoteId = market['quote_unit'];
+            const id = this.safeString (market, 'id');
+            const baseId = this.safeString(market, 'base_unit');
+            const quoteId = this.safeString(market, 'quote_unit');
             const base = this.safeCurrencyCode (baseId);
             const quote = this.safeCurrencyCode (quoteId);
             const symbol = base + '/' + quote;
             const precision = {
-                'amount': market['base_unit_precision'],
-                'price': market['quote_unit_precision'],
+                'amount': this.safeInteger (market, 'base_unit_precision'),
+                'price': this.safeInteger (market, 'quote_unit_precision'),
             };
             const active = true;
+            const baseMinSize = this.safeFloat (market, 'min_base_amount');
+            const quoteMinSize = this.safeFloat (market, 'min_quote_amount');
             const entry = {
                 'id': id,
                 'symbol': symbol,
@@ -332,7 +334,7 @@ module.exports = class max extends Exchange {
                 'precision': precision,
                 'limits': {
                     'amount': {
-                        'min': this.safeFloat (this.options['minimumAmountOfCurrencies'], base),
+                        'min': baseMinSize,
                         'max': undefined,
                     },
                     'price': {
@@ -340,7 +342,7 @@ module.exports = class max extends Exchange {
                         'max': undefined,
                     },
                     'cost': {
-                        'min': this.safeFloat (this.options['minimumAmountOfCurrencies'], quote),
+                        'min': quoteMinSize,
                         'max': undefined,
                     },
                 },
@@ -352,17 +354,22 @@ module.exports = class max extends Exchange {
 
     calculateFee (symbol, type, side, amount, price, takerOrMaker = 'taker', params = {}) {
         const market = this.markets[symbol];
-        let key = 'quote';
         const rate = market[takerOrMaker];
         let cost = amount * rate;
-        let precision = market['precision']['price'];
+        let key = 'quote';
         if (side === 'sell') {
             cost *= price;
         } else {
             key = 'base';
-            precision = market['precision']['amount'];
         }
-        cost = parseFloat (this.decimalToPrecision (cost, ROUND, precision, this.precisionMode));
+        const code = market[key];
+        const currency = this.safeValue (this.currencies, code);
+        if (currency !== undefined) {
+            const precision = this.safeInteger (currency, 'precision');
+            if (precision !== undefined) {
+                cost = parseFloat (this.currencyToPrecision (code, cost));
+            }
+        }
         return {
             'type': takerOrMaker,
             'currency': market[key],
@@ -377,15 +384,13 @@ module.exports = class max extends Exchange {
         const result = { 'info': response };
         for (let i = 0; i < response.length; i++) {
             const balance = response[i];
-            let currency = balance['currency'];
-            if (currency in this.currencies_by_id) {
-                currency = this.currencies_by_id[currency]['code'];
-            }
+            const currencyId = this.safeString (balance, 'currency');
+            const code = this.safeCurrencyCode (currencyId);
             const account = this.account ();
             account['free'] = this.safeFloat (balance, 'balance');
             account['used'] = this.safeFloat (balance, 'locked');
             account['total'] = this.sum (account['free'], account['used']);
-            result[currency] = account;
+            result[code] = account;
         }
         return this.parseBalance (result);
     }
@@ -408,16 +413,18 @@ module.exports = class max extends Exchange {
     parseTicker (ticker, market = undefined) {
         const timestamp = this.safeTimestamp (ticker, 'at');
         let symbol = undefined;
-        const marketId = this.safeString (ticker, 'symbol');
-        if (marketId in this.markets_by_id) {
-            market = this.markets_by_id[marketId];
-        }
         if (market !== undefined) {
             symbol = market['symbol'];
+        } else if ('symbol' in ticker) {
+            const marketId = this.safeString (ticker, 'symbol');
+            if (marketId !== undefined) {
+                if (marketId in this.markets_by_id) {
+                    market = this.markets_by_id[marketId];
+                    symbol = market['symbol'];
+                }
+            }
         }
         const last = this.safeFloat (ticker, 'last');
-        const open = this.safeFloat (ticker, 'open');
-        const change = last - open;
         return {
             'symbol': symbol,
             'timestamp': timestamp,
@@ -429,12 +436,12 @@ module.exports = class max extends Exchange {
             'ask': this.safeFloat (ticker, 'sell'),
             'askVolume': undefined,
             'vwap': undefined,
-            'open': open,
+            'open': this.safeFloat (ticker, 'open'),
             'close': last,
             'last': last,
             'previousClose': undefined,
-            'change': change,
-            'percentage': (change / open) * 100,
+            'change': undefined,
+            'percentage': undefined,
             'average': undefined,
             'baseVolume': this.safeFloat (ticker, 'vol'),
             'quoteVolume': undefined,
@@ -461,11 +468,10 @@ module.exports = class max extends Exchange {
             const key = tickerKeys[i];
             response[key]['symbol'] = key;
             const ticker = this.parseTicker (response[key]);
-            if (symbols === undefined || symbols.includes (ticker['symbol'])) {
-                result[ticker['symbol']] = ticker;
-            }
+            const symbol = ticker['symbol'];
+            result[symbol] = ticker;
         }
-        return result;
+        return this.filterByArray (result, 'symbol', symbols);
     }
 
     parseOHLCV (ohlcv, market = undefined) {
@@ -541,10 +547,7 @@ module.exports = class max extends Exchange {
     }
 
     parseTransactionStatusByType (status, type = undefined) {
-        if (type === undefined) {
-            return status;
-        }
-        const statuses = {
+        const statusesByType = {
             'deposit': {
                 'submitting': 'pending',
                 'cancelled': 'canceled',
@@ -552,6 +555,7 @@ module.exports = class max extends Exchange {
                 'suspended': 'pending',
                 'rejected': 'failed',
                 'accepted': 'ok',
+                'checking': 'pending',
                 'refunded': 'failed',
                 'suspect': 'pending',
                 'refund_cancelled': 'ok',
@@ -574,14 +578,48 @@ module.exports = class max extends Exchange {
                 'kgi_instruction_sent': 'pending',
                 'kgi_manually_confirmed': 'ok',
                 'kgi_possible_failed': 'pending',
+                'sygna_verifying': 'pending',
             },
         };
-        return (status in statuses[type]) ? statuses[type][status] : status;
+        const statuses = this.safeValue (statusesByType, type, {});
+        return this.safeString (statuses, status, status);
     }
 
     parseTransaction (transaction, currency = undefined) {
-        const id = this.safeString (transaction, 'uuid');
+        //
+        // fetchDeposits
+        //
+        //   {
+        //      currency: 'eth',
+        //      currency_version: 'eth',
+        //      amount: '1.12345',
+        //      fee: '0.123',
+        //      txid: '0x123456789abcdef...',
+        //      created_at: 1584584162,
+        //      updated_at: 1584584199,
+        //      confirmations: '12',
+        //      state: 'accepted',
+        //      type: 'deposit'
+        //    }
+        //
+        // fetchWithdrawals
+        //
+        //    {
+        //      uuid: '0123456789...',
+        //      currency: 'eth',
+        //      currency_version: 'eth',
+        //      amount: '1.12345',
+        //      fee: '0.123',
+        //      fee_currency: 'max',
+        //      txid: '0x123456789abcdef...',
+        //      created_at: 1597164616,
+        //      updated_at: 1598847790,
+        //      state: 'confirmed',
+        //      type: 'withdrawal'
+        //    }
+        //
         const txid = this.safeString (transaction, 'txid');
+        const id = this.safeString (transaction, 'uuid', txid);
         const currencyId = this.safeString (transaction, 'currency');
         const code = this.safeCurrencyCode (currencyId, currency);
         const timestamp = this.safeTimestamp (transaction, 'created_at');
@@ -675,7 +713,8 @@ module.exports = class max extends Exchange {
         if (side === 'ask') {
             return 'sell';
         }
-        return undefined;
+        // self-trade
+        return side;
     }
 
     parseTrade (trade, market = undefined) {
@@ -690,6 +729,7 @@ module.exports = class max extends Exchange {
         //        "market": "btcusdt",
         //        "market_name": "BTC/USDT",
         //        "created_at": 1553341297,
+        //        "created_at_in_ms": 1553341297000,
         //        "side": "bid"
         //    }
         //
@@ -704,6 +744,7 @@ module.exports = class max extends Exchange {
         //        "market": "btcusdt",
         //        "market_name": "BTC/USDT",
         //        "created_at": 1543941724,
+        //        "created_at_in_ms": 1543941724000,
         //        "side": "ask",
         //        "fee": "0.747557",
         //        "fee_currency": "usdt",
@@ -728,20 +769,16 @@ module.exports = class max extends Exchange {
                 'currency': this.safeCurrencyCode (trade['fee_currency']),
             };
         }
-        const tradeInfo = this.safeValue (trade, 'info');
-        const tradeMakerSide = this.safeString2 (tradeInfo, 'maker');
         let takerOrMaker = undefined;
-        if (tradeMakerSide !== undefined && side !== undefined) {
-            takerOrMaker = (tradeMakerSide === side) ? 'maker' : 'taker';
+        if ('info' in trade) {
+            const tradeInfo = this.safeValue (trade, 'info');
+            const tradeMakerSide = this.safeString2 (tradeInfo, 'maker');
+            if (tradeMakerSide !== undefined && side !== undefined) {
+                takerOrMaker = (tradeMakerSide === side) ? 'maker' : 'taker';
+            }    
         }
-        let symbol = undefined;
-        if (market === undefined) {
-            const marketId = this.safeString (trade, 'market');
-            market = this.safeValue (this.markets_by_id, marketId);
-        }
-        if (market !== undefined) {
-            symbol = market['symbol'];
-        }
+        const marketId = this.safeString (trade, 'market');
+        const symbol = this.safeSymbol (marketId, market);
         return {
             'info': trade,
             'timestamp': timestamp,
